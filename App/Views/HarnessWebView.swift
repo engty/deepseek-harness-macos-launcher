@@ -28,6 +28,7 @@ struct HarnessWebView: NSViewRepresentable {
         webView.load(URLRequest(url: url))
     }
 
+    @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
         let allowedOrigin: URL
         var onLoadError: (String) -> Void
