@@ -33,6 +33,9 @@ struct DeepSeekCredentialStore {
     func read(from dshHome: URL) throws -> String? {
         let url = credentialsURL(in: dshHome)
         guard fileManager.fileExists(atPath: url.path) else { return nil }
+        // Never follow a symlink planted at the credentials path: reading
+        // through it could surface unrelated file contents as the API key.
+        if isSymbolicLink(url) { return nil }
         guard let text = try? String(contentsOf: url, encoding: .utf8) else {
             throw DeepSeekCredentialStoreError.unreadableDocument
         }
@@ -128,16 +131,37 @@ struct DeepSeekCredentialStore {
         defer { try? fileManager.removeItem(at: temporaryURL) }
 
         do {
-            try Data(text.utf8).write(to: temporaryURL, options: .atomic)
-            try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: temporaryURL.path)
+            // Create the temp file directly with 0600 so there is no window
+            // in which another local process could read the plaintext key
+            // (the previous approach created it with default permissions and
+            // only chmod'ed afterwards).
+            guard fileManager.createFile(
+                atPath: temporaryURL.path,
+                contents: Data(text.utf8),
+                attributes: [.posixPermissions: 0o600]
+            ) else {
+                throw DeepSeekCredentialStoreError.writeFailed("无法创建临时凭据文件。")
+            }
+            let handle = try FileHandle(forWritingTo: temporaryURL)
+            try handle.synchronize()
+            try handle.close()
+            if isSymbolicLink(url) {
+                try fileManager.removeItem(at: url)
+            }
             if fileManager.fileExists(atPath: url.path) {
                 _ = try fileManager.replaceItemAt(url, withItemAt: temporaryURL)
             } else {
                 try fileManager.moveItem(at: temporaryURL, to: url)
             }
             try fileManager.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+        } catch let error as DeepSeekCredentialStoreError {
+            throw error
         } catch {
             throw DeepSeekCredentialStoreError.writeFailed(error.localizedDescription)
         }
+    }
+
+    private func isSymbolicLink(_ url: URL) -> Bool {
+        (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) == true
     }
 }

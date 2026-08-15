@@ -70,5 +70,14 @@ struct AppPaths {
         for directory in directories {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
+        // Sensitive trees must not be world-readable even under a permissive
+        // umask: dsh-home holds the credentials file, diagnostics and logs
+        // hold redacted-but-sensitive operation data.
+        for directory in [dshHome, diagnostics, logs] {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: 0o700],
+                ofItemAtPath: directory.path
+            )
+        }
     }
 }

@@ -3,6 +3,9 @@ import CryptoKit
 import Testing
 @testable import HarnessLauncher
 
+// The URLProtocol stub uses shared static response dictionaries; serial
+// execution keeps parallel tests from clearing each other's responses.
+@Suite(.serialized)
 struct RuntimeManifestTests {
     @Test
     func unsignedManifestValidatesHTTPSHashAndSafeRuntimeID() throws {
@@ -343,7 +346,7 @@ struct RuntimeManifestTests {
     }
 
     @Test
-    func dataSlotCloneActivationAndRollbackPreserveUserProfile() throws {
+    func dataSlotCloneActivationAndRollbackPreserveUserProfile() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? fileManager.removeItem(at: root) }
@@ -359,7 +362,7 @@ struct RuntimeManifestTests {
         try Data(#"{"name":"active-profile","lockfileVersion":1}"#.utf8).write(to: profile)
 
         let manager = DataSlotManager()
-        let candidate = try manager.cloneActiveSlot(paths: paths)
+        let candidate = try await manager.cloneActiveSlot(paths: paths)
         let candidateProfile = candidate.appendingPathComponent("dsh-home/profiles/web/package.json")
         try Data(#"{"name":"candidate-profile","lockfileVersion":1}"#.utf8).write(to: candidateProfile)
         let activation = try manager.activate(candidateSlot: candidate, paths: paths)
@@ -369,7 +372,7 @@ struct RuntimeManifestTests {
         )
         #expect(activatedProfile.contains("candidate-profile"))
 
-        let secondCandidate = try manager.cloneActiveSlot(paths: paths)
+        let secondCandidate = try await manager.cloneActiveSlot(paths: paths)
         let secondProfile = secondCandidate.appendingPathComponent("dsh-home/profiles/web/package.json")
         try Data(#"{"name":"second-candidate","lockfileVersion":1}"#.utf8).write(to: secondProfile)
         let secondActivation = try manager.activate(candidateSlot: secondCandidate, paths: paths)

@@ -38,15 +38,28 @@ final class PluginSelectionAccessoryView: NSView {
             stack.addArrangedSubview(button)
         }
 
-        addSubview(stack)
+        let contentHeight = CGFloat(34 + max(plugins.count, 1) * 24)
+
+        // With many installed plugins the button list no longer fits the
+        // fixed accessory height, so the stack lives inside a scroll view
+        // and the accessory keeps a bounded height.
+        let scrollView = NSScrollView()
+        scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.hasVerticalScroller = true
+        scrollView.drawsBackground = false
+        scrollView.documentView = stack
+        addSubview(scrollView)
         NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: leadingAnchor),
-            stack.trailingAnchor.constraint(equalTo: trailingAnchor),
-            stack.topAnchor.constraint(equalTo: topAnchor),
-            stack.bottomAnchor.constraint(equalTo: bottomAnchor)
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            stack.leadingAnchor.constraint(equalTo: scrollView.contentView.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: scrollView.contentView.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: scrollView.contentView.topAnchor),
+            stack.heightAnchor.constraint(equalToConstant: contentHeight)
         ])
 
-        let contentHeight = CGFloat(34 + max(plugins.count, 1) * 24)
         frame.size.height = min(max(contentHeight, 72), 280)
         updateSelectAllState()
     }

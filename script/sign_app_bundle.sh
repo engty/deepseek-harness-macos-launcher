@@ -44,13 +44,28 @@ sign_path() {
 
 # Sign nested Mach-O files before sealing the outer bundle. This avoids relying
 # on --deep for signing while still covering a bundled Node executable or
-# future native helper added under Contents/.
+# future native helper added under Contents/. All regular files are classified
+# in a SINGLE `file` invocation (the bundle contains tens of thousands of
+# runtime files; spawning `file` per file would take minutes), so dylibs and
+# frameworks without the execute bit are covered too.
+file_list="$(mktemp -t dsh-sign-files.XXXXXX)"
+cleanup_file_list() { rm -f "$file_list"; }
+trap cleanup_file_list EXIT
+find "$APP_BUNDLE/Contents" -type f -print0 >"$file_list" || fail "cannot enumerate bundle contents"
+if [[ ! -s "$file_list" ]]; then
+  fail "bundle contains no files to scan"
+fi
+# `file -0 -f -` emits "<path>\0<description>\n" pairs for NUL-terminated
+# input paths; read them as matched pairs.
 while IFS= read -r -d '' candidate; do
+  IFS= read -r description || true
   [[ "$candidate" == "$APP_BUNDLE/Contents/MacOS/HarnessLauncher" ]] && continue
-  if file "$candidate" 2>/dev/null | grep -q 'Mach-O'; then
-    sign_path "$candidate"
-  fi
-done < <(find "$APP_BUNDLE/Contents" -type f -perm -111 -print0)
+  case "$description" in
+    *Mach-O*)
+      sign_path "$candidate"
+      ;;
+  esac
+done < <(file -0 -f - <"$file_list")
 
 sign_path "$APP_BUNDLE"
 codesign --verify --deep --strict "$APP_BUNDLE"

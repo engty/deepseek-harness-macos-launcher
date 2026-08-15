@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 enum PluginDependencySource: Equatable {
@@ -307,18 +308,44 @@ struct PluginDependencyService {
               let manifest = ToolchainCatalog.bundled.manifest(for: requirement) else {
             return nil
         }
-        let executable = privateToolchainRoot
+        let versionRoot = privateToolchainRoot
             .appendingPathComponent(manifest.id, isDirectory: true)
             .appendingPathComponent(manifest.version, isDirectory: true)
+        let executable = versionRoot
             .appendingPathComponent("bin", isDirectory: true)
             .appendingPathComponent(manifest.executableName)
         guard isExecutable(executable) else { return nil }
+        // The toolchain directory lives under user-writable Application
+        // Support: only trust an installed binary when both its manifest and
+        // its SHA-256 still match the pinned catalog entry.
+        guard installedManifestIsValid(versionRoot: versionRoot, manifest: manifest),
+              binarySHA256(of: executable) == manifest.sha256 else {
+            return nil
+        }
         return ResolvedPluginDependency(
             name: manifest.id,
             executable: executable,
             version: manifest.version,
             source: .bundled
         )
+    }
+
+    private func installedManifestIsValid(versionRoot: URL, manifest: ToolchainManifest) -> Bool {
+        guard let data = try? Data(contentsOf: versionRoot.appendingPathComponent("manifest.json")),
+              let installed = try? JSONDecoder().decode(ToolchainManifest.self, from: data) else {
+            return false
+        }
+        return installed == manifest
+    }
+
+    private func binarySHA256(of url: URL) -> String {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return "" }
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try? handle.read(upToCount: 1_024 * 1_024), !chunk.isEmpty {
+            hasher.update(data: chunk)
+        }
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private func privateToolchainBinDirectories(root: URL) -> [String] {

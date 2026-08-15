@@ -71,11 +71,9 @@ struct HarnessWebView: NSViewRepresentable {
                 return
             }
 
-            if targetURL.scheme == allowedOrigin.scheme,
-               targetURL.host == allowedOrigin.host,
-               targetURL.port == allowedOrigin.port {
+            if HarnessWebView.sharesOrigin(targetURL, allowedOrigin) {
                 decisionHandler(.allow)
-            } else if targetURL.scheme == "https",
+            } else if targetURL.scheme?.lowercased() == "https",
                       navigationAction.navigationType == .linkActivated {
                 // Only user-clicked external links may leave the dedicated App window.
                 // Redirects and script navigations are denied to avoid silently handing
@@ -95,7 +93,7 @@ struct HarnessWebView: NSViewRepresentable {
         ) -> WKWebView? {
             guard navigationAction.navigationType == .linkActivated,
                   let targetURL = navigationAction.request.url,
-                  targetURL.scheme == "https" else { return nil }
+                  targetURL.scheme?.lowercased() == "https" else { return nil }
             NSWorkspace.shared.open(targetURL)
             return nil
         }

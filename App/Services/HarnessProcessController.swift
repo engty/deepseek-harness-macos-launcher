@@ -1,6 +1,17 @@
 import Darwin
 import Foundation
 
+/// Sidecar identity stored in the PID file. The process start time and nonce
+/// let the next launch prove that a lingering PID actually belongs to this
+/// App's previous sidecar instead of a reused PID that now points at an
+/// unrelated process.
+private struct SidecarPIDRecord: Codable {
+    let pid: Int
+    let nonce: String
+    let startedAt: Date
+    let executable: String
+}
+
 enum HarnessProcessError: LocalizedError {
     case alreadyRunning
     case failedToLaunch(String)
@@ -31,6 +42,9 @@ final class HarnessProcessController {
     private var launchToken = UUID()
     private var outputBuffer = ""
     private var sidecarPIDURL: URL?
+    /// Thread-safe sink that coalesces pipe chunks and hands them to the main
+    /// actor in bounded batches (see PendingOutputSink).
+    private let pendingOutputSink = PendingOutputSink()
 
     var isRunning: Bool { process?.isRunning == true }
 
@@ -83,22 +97,35 @@ final class HarnessProcessController {
         let token = UUID()
         launchToken = token
 
-        attachOutputHandler(to: outputPipe, isError: false)
-        attachOutputHandler(to: errorPipe, isError: true)
-
-        do {
-            try process.run()
-            sidecarPIDURL = paths.sidecarPID
-            try? String(process.processIdentifier).write(to: paths.sidecarPID, atomically: true, encoding: .utf8)
-        } catch {
-            cleanupProcess()
-            throw HarnessProcessError.failedToLaunch(error.localizedDescription)
-        }
-
+        // Install the termination handler before `run()` so an instantly
+        // exiting child is still observed (previously the handler was set
+        // after run, leaving a window where the exit was missed until the
+        // readiness timeout).
         process.terminationHandler = { [weak self] process in
             Task { @MainActor [weak self] in
                 self?.handleTermination(process, token: token)
             }
+        }
+
+        attachOutputHandler(to: outputPipe, isError: false, token: token)
+        attachOutputHandler(to: errorPipe, isError: true, token: token)
+
+        do {
+            try process.run()
+            sidecarPIDURL = paths.sidecarPID
+            let record = SidecarPIDRecord(
+                pid: Int(process.processIdentifier),
+                nonce: token.uuidString,
+                startedAt: Date(),
+                executable: installation.executable.path
+            )
+            try? JSONEncoder().encode(record).write(
+                to: paths.sidecarPID,
+                options: .atomic
+            )
+        } catch {
+            cleanupProcess()
+            throw HarnessProcessError.failedToLaunch(error.localizedDescription)
         }
 
         let timeoutTask = Task { @MainActor [weak self] in
@@ -152,18 +179,32 @@ final class HarnessProcessController {
         cleanupProcess()
     }
 
-    private func attachOutputHandler(to pipe: Pipe, isError: Bool) {
+    private func attachOutputHandler(to pipe: Pipe, isError: Bool, token: UUID) {
         pipe.fileHandleForReading.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
-            guard !data.isEmpty else { return }
-            let text = String(data: data, encoding: .utf8) ?? ""
+            guard !data.isEmpty, let self else { return }
+            // Coalesce chunks: at most one MainActor task is scheduled per
+            // burst, so a noisy sidecar cannot flood the main actor with one
+            // task per pipe chunk.
+            let shouldSchedule = self.pendingOutputSink.append(data)
+            guard shouldSchedule else { return }
             Task { @MainActor [weak self] in
-                self?.consume(text, isError: isError)
+                self?.drainPendingOutput(isError: isError, token: token)
             }
         }
     }
 
-    private func consume(_ text: String, isError: Bool) {
+    private func drainPendingOutput(isError: Bool, token: UUID) {
+        guard let data = pendingOutputSink.drain(), !data.isEmpty else { return }
+        let text = String(data: data, encoding: .utf8) ?? ""
+        consume(text, isError: isError, token: token)
+    }
+
+    private func consume(_ text: String, isError: Bool, token: UUID) {
+        // Only output belonging to the current launch may update the
+        // readiness buffer; a stale chunk from a previous sidecar would
+        // otherwise be mistaken for this launch's ready URL.
+        guard token == launchToken else { return }
         outputBuffer.append(text)
         if outputBuffer.count > 160_000 {
             outputBuffer = String(outputBuffer.suffix(160_000))
@@ -211,11 +252,14 @@ final class HarnessProcessController {
     }
 
     private func cleanupProcess() {
-        if let process, let sidecarPIDURL, let pidText = try? String(contentsOf: sidecarPIDURL, encoding: .utf8),
-           Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)) == process.processIdentifier {
+        if let process, let sidecarPIDURL,
+           let data = try? Data(contentsOf: sidecarPIDURL),
+           let record = try? JSONDecoder().decode(SidecarPIDRecord.self, from: data),
+           record.pid == process.processIdentifier {
             try? FileManager.default.removeItem(at: sidecarPIDURL)
         }
         sidecarPIDURL = nil
+        pendingOutputSink.reset()
         outputPipe?.fileHandleForReading.readabilityHandler = nil
         errorPipe?.fileHandleForReading.readabilityHandler = nil
         outputPipe = nil
@@ -225,26 +269,30 @@ final class HarnessProcessController {
     }
 
     private func cleanupStaleSidecar(for installation: RuntimeInstallation, paths: AppPaths) {
-        guard let pidText = try? String(contentsOf: paths.sidecarPID, encoding: .utf8),
-              let pid = Int32(pidText.trimmingCharacters(in: .whitespacesAndNewlines)),
-              pid > 0,
-              pid != getpid() else {
+        guard let data = try? Data(contentsOf: paths.sidecarPID) else { return }
+        let pid: Int32
+        var recordedStartTime: Date?
+
+        if let record = try? JSONDecoder().decode(SidecarPIDRecord.self, from: data) {
+            pid = Int32(record.pid)
+            recordedStartTime = record.startedAt
+        } else if let legacyPID = Int32(
+            String(decoding: data, as: UTF8.self).trimmingCharacters(in: .whitespacesAndNewlines)
+        ) {
+            // Legacy plain-integer PID files keep the previous path-only
+            // behaviour for one upgrade cycle.
+            pid = legacyPID
+        } else {
             try? FileManager.default.removeItem(at: paths.sidecarPID)
             return
         }
 
-        var buffer = [CChar](repeating: 0, count: 4096)
-        let pathLength = buffer.withUnsafeMutableBytes { bytes in
-            proc_pidpath(pid, bytes.baseAddress, UInt32(bytes.count))
+        guard pid > 0, pid != getpid() else {
+            try? FileManager.default.removeItem(at: paths.sidecarPID)
+            return
         }
-        let runningPath: String? = if pathLength > 0 {
-            String(
-                decoding: buffer.map { UInt8(bitPattern: $0) },
-                as: UTF8.self
-            ).split(separator: "\0", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)
-        } else {
-            nil
-        }
+
+        let runningPath = executablePath(of: pid)
         let allowedPaths = [installation.nodeExecutable?.path, installation.executable.path].compactMap { $0 }
             .map { URL(fileURLWithPath: $0).resolvingSymlinksInPath().standardizedFileURL.path }
         guard let runningPath,
@@ -253,6 +301,17 @@ final class HarnessProcessController {
             // Runtime; it may have been reused by an unrelated process.
             try? FileManager.default.removeItem(at: paths.sidecarPID)
             return
+        }
+
+        if let recordedStartTime {
+            // The executable path matches, but a reused PID can still point
+            // at a different instance of the same binary. Only kill when the
+            // recorded process start time matches the live one.
+            guard let liveStart = processStartTime(of: pid),
+                  abs(liveStart.timeIntervalSince(recordedStartTime)) < 5 else {
+                try? FileManager.default.removeItem(at: paths.sidecarPID)
+                return
+            }
         }
 
         _ = Darwin.kill(pid, SIGTERM)
@@ -264,5 +323,66 @@ final class HarnessProcessController {
             _ = Darwin.kill(pid, SIGKILL)
         }
         try? FileManager.default.removeItem(at: paths.sidecarPID)
+    }
+
+    private func executablePath(of pid: Int32) -> String? {
+        var buffer = [CChar](repeating: 0, count: 4096)
+        let pathLength = buffer.withUnsafeMutableBytes { bytes in
+            proc_pidpath(pid, bytes.baseAddress, UInt32(bytes.count))
+        }
+        guard pathLength > 0 else { return nil }
+        return String(
+            decoding: buffer.map { UInt8(bitPattern: $0) },
+            as: UTF8.self
+        ).split(separator: "\0", maxSplits: 1, omittingEmptySubsequences: false).first.map(String.init)
+    }
+
+    private func processStartTime(of pid: Int32) -> Date? {
+        var info = kinfo_proc()
+        var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+        var size = MemoryLayout<kinfo_proc>.size
+        guard sysctl(&mib, u_int(mib.count), &info, &size, nil, 0) == 0, size > 0 else {
+            return nil
+        }
+        return Date(timeIntervalSince1970: TimeInterval(info.kp_proc.p_starttime.tv_sec))
+    }
+}
+
+/// Coalesces pipe chunks off the main actor. `append` returns true when the
+/// caller should schedule the next drain on the main actor; `drain` returns
+/// everything accumulated since the last drain and re-arms the flag.
+final class PendingOutputSink: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+    private var drainScheduled = false
+
+    func append(_ chunk: Data) -> Bool {
+        guard !chunk.isEmpty else { return false }
+        lock.lock()
+        data.append(chunk)
+        let shouldSchedule = !drainScheduled
+        if shouldSchedule { drainScheduled = true }
+        lock.unlock()
+        return shouldSchedule
+    }
+
+    func drain() -> Data? {
+        lock.lock()
+        guard drainScheduled else {
+            lock.unlock()
+            return nil
+        }
+        let snapshot = data
+        data = Data()
+        drainScheduled = false
+        lock.unlock()
+        return snapshot
+    }
+
+    func reset() {
+        lock.lock()
+        data = Data()
+        drainScheduled = false
+        lock.unlock()
     }
 }

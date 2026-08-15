@@ -62,18 +62,6 @@ final class RuntimePreflightService {
         paths: AppPaths,
         currentDirectory: URL
     ) async throws -> Result {
-        let process = Process()
-        let pipe = Pipe()
-        if let nodeExecutable = installation.nodeExecutable {
-            process.executableURL = nodeExecutable
-            process.arguments = [installation.executable.path] + arguments
-        } else {
-            process.executableURL = installation.executable
-            process.arguments = arguments
-        }
-        process.currentDirectoryURL = currentDirectory
-        process.standardOutput = pipe
-        process.standardError = pipe
         var environment = ProcessInfo.processInfo.environment
         environment["DSH_HOME"] = dshHome.path
         environment["DSH_LAUNCHER"] = "DeepSeekHarness"
@@ -81,21 +69,27 @@ final class RuntimePreflightService {
             environment: environment,
             privateToolchainRoot: paths.toolchain
         ).runtimeSearchPath(installation: installation)
-        process.environment = environment
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { process in
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                continuation.resume(returning: Result(
-                    status: process.terminationStatus,
-                    output: String(data: data, encoding: .utf8) ?? ""
-                ))
-            }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-            }
+        let executable: URL
+        let fullArguments: [String]
+        if let nodeExecutable = installation.nodeExecutable {
+            executable = nodeExecutable
+            fullArguments = [installation.executable.path] + arguments
+        } else {
+            executable = installation.executable
+            fullArguments = arguments
         }
+
+        // Streams output while the child runs and enforces a hard timeout, so
+        // a broken candidate Runtime can neither fill the pipe (deadlock) nor
+        // hang the update flow forever.
+        let result = try await SubprocessRunner.run(
+            executable: executable,
+            arguments: fullArguments,
+            environment: environment,
+            currentDirectory: currentDirectory,
+            timeout: 60
+        )
+        return Result(status: result.status, output: result.output)
     }
 }

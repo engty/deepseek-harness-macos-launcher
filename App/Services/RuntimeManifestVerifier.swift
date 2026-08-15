@@ -22,6 +22,9 @@ struct RuntimeManifestVerifier {
         guard manifest.architecture == architecture else {
             throw RuntimeManifestError.unsupportedArchitecture(manifest.architecture)
         }
+        guard StrictSemanticVersion(rawValue: manifest.minShellVersion) != nil else {
+            throw RuntimeManifestError.invalidMinShellVersion(manifest.minShellVersion)
+        }
         guard satisfiesMinimumShellVersion(
             current: shellVersion,
             minimum: manifest.minShellVersion
@@ -31,7 +34,10 @@ struct RuntimeManifestVerifier {
                 current: shellVersion
             )
         }
-        guard manifest.artifact.size >= 0 else {
+        // size == 0 used to act as a wildcard that skipped the exact-size
+        // check on download; a manifest must now always declare a positive
+        // size so tar bombs cannot dodge the resource limit.
+        guard manifest.artifact.size > 0 else {
             throw RuntimeManifestError.invalidArtifactSize
         }
         let hash = manifest.artifact.sha256
@@ -41,19 +47,15 @@ struct RuntimeManifestVerifier {
         }
     }
 
+    /// Strict SemVer comparison: both sides must parse as valid versions
+    /// (prerelease suffixes included), and prerelease versions sort below
+    /// the corresponding release. Malformed values are rejected by the
+    /// caller before this comparison via `invalidMinShellVersion`.
     private static func satisfiesMinimumShellVersion(current: String, minimum: String) -> Bool {
-        func components(_ value: String) -> [Int]? {
-            let values = value.split(separator: ".", omittingEmptySubsequences: false)
-            guard (1...3).contains(values.count) else { return nil }
-            let numbers = values.map { part -> Int? in
-                let digits = part.prefix { $0.isNumber }
-                return digits.isEmpty ? nil : Int(digits)
-            }
-            guard numbers.allSatisfy({ $0 != nil }) else { return nil }
-            return numbers.compactMap { $0 } + Array(repeating: 0, count: 3 - numbers.count)
+        guard let currentVersion = StrictSemanticVersion(rawValue: current),
+              let minimumVersion = StrictSemanticVersion(rawValue: minimum) else {
+            return false
         }
-        guard let currentComponents = components(current),
-              let minimumComponents = components(minimum) else { return false }
-        return currentComponents.lexicographicallyPrecedes(minimumComponents) == false
+        return currentVersion >= minimumVersion
     }
 }

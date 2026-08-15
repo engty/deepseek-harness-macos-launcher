@@ -62,6 +62,7 @@ enum RuntimeManifestError: LocalizedError, Equatable {
     case unsupportedSchema(Int)
     case unsupportedArchitecture(String)
     case incompatibleShellVersion(required: String, current: String)
+    case invalidMinShellVersion(String)
     case invalidRuntimeID
     case invalidArtifactHash
     case invalidArtifactSize
@@ -83,6 +84,8 @@ enum RuntimeManifestError: LocalizedError, Equatable {
             return "Runtime 架构不匹配：\(architecture)"
         case .incompatibleShellVersion(let required, let current):
             return "当前 App Shell 版本 \(current) 低于 Runtime 要求的最低版本 \(required)。"
+        case .invalidMinShellVersion(let value):
+            return "Runtime manifest 的 minShellVersion 不是有效的 SemVer 版本号：\(value)"
         case .invalidRuntimeID:
             return "Runtime ID 不是安全的目录名称。"
         case .invalidArtifactHash:

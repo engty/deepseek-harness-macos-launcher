@@ -8,8 +8,9 @@ struct AppUpdateResult: Equatable {
     let publishedAt: Date?
 
     var isUpdateAvailable: Bool {
-        guard let latest = SemanticVersion(rawValue: latestVersion) else { return false }
-        return latest > (SemanticVersion(rawValue: currentVersion) ?? .zero)
+        guard let latest = StrictSemanticVersion(rawValue: latestVersion) else { return false }
+        guard let current = StrictSemanticVersion(rawValue: currentVersion) else { return true }
+        return latest > current
     }
 }
 
@@ -90,7 +91,7 @@ final class AppUpdateService {
             throw AppUpdateError.invalidJSON
         }
 
-        guard let latestVersion = SemanticVersion(rawValue: release.tagName)?.description else {
+        guard let latestVersion = StrictSemanticVersion(rawValue: release.tagName)?.description else {
             throw AppUpdateError.invalidReleaseVersion
         }
         guard release.htmlURL.scheme == "https",
@@ -119,42 +120,5 @@ private struct GitHubRelease: Decodable {
         case name
         case htmlURL = "html_url"
         case publishedAt = "published_at"
-    }
-}
-
-private struct SemanticVersion: Comparable, CustomStringConvertible {
-    static let zero = SemanticVersion(major: 0, minor: 0, patch: 0)
-
-    let major: Int
-    let minor: Int
-    let patch: Int
-
-    init(major: Int, minor: Int, patch: Int) {
-        self.major = major
-        self.minor = minor
-        self.patch = patch
-    }
-
-    init?(rawValue: String) {
-        let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            .drop { $0 == "v" || $0 == "V" }
-            .split(separator: "-", maxSplits: 1, omittingEmptySubsequences: true)
-            .first
-        guard let value else { return nil }
-        let components = value.split(separator: ".", omittingEmptySubsequences: false)
-        guard (1...3).contains(components.count) else { return nil }
-        let numbers = components.map { Int($0) }
-        guard numbers.allSatisfy({ $0 != nil }) else { return nil }
-        major = numbers[0] ?? 0
-        minor = numbers.count > 1 ? numbers[1] ?? 0 : 0
-        patch = numbers.count > 2 ? numbers[2] ?? 0 : 0
-    }
-
-    var description: String { "\(major).\(minor).\(patch)" }
-
-    static func < (lhs: SemanticVersion, rhs: SemanticVersion) -> Bool {
-        if lhs.major != rhs.major { return lhs.major < rhs.major }
-        if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
-        return lhs.patch < rhs.patch
     }
 }

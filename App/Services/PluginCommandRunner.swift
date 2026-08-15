@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 
 struct PluginCommandResult {
@@ -8,6 +9,7 @@ struct PluginCommandResult {
 enum PluginCommandError: LocalizedError {
     case failedToLaunch(String)
     case nonZeroExit(String)
+    case commandTimedOut(command: String, output: String)
     case buildScriptsRequireApproval([String], output: String)
 
     var errorDescription: String? {
@@ -16,6 +18,10 @@ enum PluginCommandError: LocalizedError {
             return "无法启动 Harness 插件命令：\(message)"
         case .nonZeroExit(let output):
             return "插件命令执行失败。\n\(output)"
+        case .commandTimedOut(let command, let output):
+            let tail = SensitiveDataRedactor.redact(String(output.suffix(2_000)))
+            let detail = tail.isEmpty ? "" : "\n\(tail)"
+            return "插件命令执行超时（\(command)），已终止其进程树。\(detail)"
         case .buildScriptsRequireApproval(let packages, let output):
             return "pnpm 阻止了插件构建脚本：\(packages.joined(separator: "、"))。\n\(output)"
         }
@@ -24,6 +30,26 @@ enum PluginCommandError: LocalizedError {
 
 @MainActor
 final class PluginCommandRunner {
+    /// Default wall-clock limit for one `dsh plugin` command (installs with
+    /// build scripts can legitimately take minutes; a hung child must not
+    /// keep the launcher busy forever).
+    private static let defaultCommandTimeout: TimeInterval = 900
+
+    /// The command currently executing (the operation gate serializes all
+    /// plugin mutations, so there is at most one).
+    private var activeProcess: Process?
+
+    /// Terminates the currently running plugin command and its child tree.
+    /// Used when the app quits so pnpm/plugin build children do not survive
+    /// as orphans.
+    func cancelActiveCommand() {
+        guard let process = activeProcess, process.isRunning else { return }
+        process.terminate()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { [weak process] in
+            guard let process, process.isRunning else { return }
+            Self.killProcessTree(root: process.processIdentifier)
+        }
+    }
     func dependencyPlan(
         installation: RuntimeInstallation,
         paths: AppPaths,
@@ -52,8 +78,11 @@ final class PluginCommandRunner {
             arguments: arguments
         )
         let dataSlotManager = DataSlotManager()
-        let stagingSlot = try dataSlotManager.cloneActiveSlot(paths: paths)
+        let stagingSlot = try await dataSlotManager.cloneActiveSlot(paths: paths)
         let stagingRoot = stagingSlot.deletingLastPathComponent()
+        // The private staging copy is removed on every exit path after this
+        // point; only the slot that was actually activated survives.
+        defer { try? FileManager.default.removeItem(at: stagingRoot) }
         let stagingHome = stagingSlot.appendingPathComponent("dsh-home", isDirectory: true)
         let stagingProfile = stagingHome.appendingPathComponent("profiles/web", isDirectory: true)
         let metadataStore = PluginMetadataStore()
@@ -63,48 +92,36 @@ final class PluginCommandRunner {
             to: paths.pluginOperationsLog
         )
         if !allowedBuildScripts.isEmpty {
-            do {
-                try PnpmWorkspaceConfig.approveBuildScripts(
-                    allowedBuildScripts,
-                    in: stagingProfile
-                )
-            } catch {
-                try? FileManager.default.removeItem(at: stagingRoot)
-                throw error
-            }
+            try PnpmWorkspaceConfig.approveBuildScripts(
+                allowedBuildScripts,
+                in: stagingProfile
+            )
         }
 
         let result: PluginCommandResult
-        do {
-            result = try await run(
-                installation: installation,
-                arguments: ["plugin", "--profile", "web"] + arguments,
-                environment: PluginDependencyService(
-                    privateToolchainRoot: paths.toolchain
-                ).applying(
-                    plan: dependencyPlan,
-                    additions: [
-                        "DSH_HOME": stagingHome.path,
-                        "DSH_LAUNCHER": "DeepSeekHarness"
-                    ]
-                ),
-                currentDirectory: stagingProfile,
-                logURL: paths.pluginOperationsLog
-            )
-        } catch {
-            try? FileManager.default.removeItem(at: stagingRoot)
-            throw error
-        }
+        result = try await run(
+            installation: installation,
+            arguments: ["plugin", "--profile", "web"] + arguments,
+            environment: PluginDependencyService(
+                privateToolchainRoot: paths.toolchain
+            ).applying(
+                plan: dependencyPlan,
+                additions: [
+                    "DSH_HOME": stagingHome.path,
+                    "DSH_LAUNCHER": "DeepSeekHarness"
+                ]
+            ),
+            currentDirectory: stagingProfile,
+            logURL: paths.pluginOperationsLog
+        )
 
         guard result.status == 0 else {
             if let packages = Self.parseBuildApprovalPackages(result.output) {
-                try? FileManager.default.removeItem(at: stagingRoot)
                 throw PluginCommandError.buildScriptsRequireApproval(
                     packages,
                     output: Self.redact(result.output)
                 )
             }
-            try? FileManager.default.removeItem(at: stagingRoot)
             throw PluginCommandError.nonZeroExit(Self.redact(result.output))
         }
 
@@ -128,7 +145,6 @@ final class PluginCommandRunner {
                 "PREFLIGHT FAILED \(Self.redact(preflight.output))",
                 to: paths.pluginOperationsLog
             )
-            try? FileManager.default.removeItem(at: stagingRoot)
             throw PluginCommandError.nonZeroExit("插件配置预检失败，当前 profile 未改变。")
         }
 
@@ -148,7 +164,6 @@ final class PluginCommandRunner {
                 to: paths.pluginOperationsLog
             )
             await candidateController.stop()
-            try? FileManager.default.removeItem(at: stagingRoot)
             throw PluginCommandError.nonZeroExit("插件候选启动预检失败，当前 profile 未改变。")
         }
 
@@ -157,7 +172,6 @@ final class PluginCommandRunner {
                 "STAGING PROFILE INVALID: package.json missing",
                 to: paths.pluginOperationsLog
             )
-            try? FileManager.default.removeItem(at: stagingRoot)
             throw PluginCommandError.nonZeroExit("临时 profile 没有生成 package.json")
         }
 
@@ -169,13 +183,11 @@ final class PluginCommandRunner {
 
         do {
             _ = try dataSlotManager.activate(candidateSlot: stagingSlot, paths: paths)
-            try? FileManager.default.removeItem(at: stagingRoot)
         } catch {
             PluginOperationLog.append(
                 "ACTIVATE FAILED \(Self.redact(error.localizedDescription))",
                 to: paths.pluginOperationsLog
             )
-            try? FileManager.default.removeItem(at: stagingRoot)
             throw error
         }
         PluginOperationLog.append(
@@ -197,7 +209,7 @@ final class PluginCommandRunner {
     ) async throws -> PluginCommandResult {
         let process = Process()
         let outputPipe = Pipe()
-        let outputBuffer = PluginProcessOutputBuffer()
+        let outputBuffer = BoundedSubprocessOutputBuffer(limit: 4 * 1_024 * 1_024)
         if let nodeExecutable = installation.nodeExecutable {
             process.executableURL = nodeExecutable
             process.arguments = [installation.executable.path] + arguments
@@ -225,48 +237,117 @@ final class PluginCommandRunner {
             to: logURL
         )
         let completionGate = PluginProcessCompletionGate()
+        activeProcess = process
+        defer { activeProcess = nil }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            process.terminationHandler = { process in
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                outputBuffer.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
-                let output = outputBuffer.stringValue
-                let redactedOutput = Self.redact(output)
-                if process.terminationStatus == 0 {
-                    AppLogger.plugins.info("Plugin command completed: \(commandDescription, privacy: .public)")
-                    PluginOperationLog.append(
-                        "EXIT 0 \(commandDescription)\n\(redactedOutput)",
-                        to: logURL
-                    )
-                } else {
-                    AppLogger.plugins.error(
-                        "Plugin command failed (\(process.terminationStatus)): \(redactedOutput, privacy: .public)"
-                    )
-                    PluginOperationLog.append(
-                        "EXIT \(process.terminationStatus) \(commandDescription)\n\(redactedOutput)",
-                        to: logURL
-                    )
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                process.terminationHandler = { process in
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    outputBuffer.append(outputPipe.fileHandleForReading.readDataToEndOfFile())
+                    let output = outputBuffer.stringValue
+                    let redactedOutput = Self.redact(output)
+                    if process.terminationStatus == 0 {
+                        AppLogger.plugins.info("Plugin command completed: \(commandDescription, privacy: .public)")
+                        PluginOperationLog.append(
+                            "EXIT 0 \(commandDescription)\n\(redactedOutput)",
+                            to: logURL
+                        )
+                    } else {
+                        AppLogger.plugins.error(
+                            "Plugin command failed (\(process.terminationStatus)): \(redactedOutput, privacy: .public)"
+                        )
+                        PluginOperationLog.append(
+                            "EXIT \(process.terminationStatus) \(commandDescription)\n\(redactedOutput)",
+                            to: logURL
+                        )
+                    }
+                    guard completionGate.claim() else { return }
+                    continuation.resume(returning: PluginCommandResult(
+                        status: process.terminationStatus,
+                        output: output
+                    ))
                 }
-                guard completionGate.claim() else { return }
-                continuation.resume(returning: PluginCommandResult(
-                    status: process.terminationStatus,
-                    output: output
-                ))
-            }
-            do {
-                try process.run()
-            } catch {
-                outputPipe.fileHandleForReading.readabilityHandler = nil
-                guard completionGate.claim() else { return }
-                AppLogger.plugins.error(
-                    "Plugin command launch failed: \(error.localizedDescription, privacy: .public)"
+
+                let timeoutWork = DispatchWorkItem {
+                    guard completionGate.claim() else { return }
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    AppLogger.plugins.error(
+                        "Plugin command timed out: \(commandDescription, privacy: .public)"
+                    )
+                    if process.isRunning {
+                        process.terminate()
+                        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                            if process.isRunning {
+                                Self.killProcessTree(root: process.processIdentifier)
+                            }
+                        }
+                    }
+                    continuation.resume(throwing: PluginCommandError.commandTimedOut(
+                        command: commandDescription,
+                        output: outputBuffer.stringValue
+                    ))
+                }
+                DispatchQueue.global().asyncAfter(
+                    deadline: .now() + Self.defaultCommandTimeout,
+                    execute: timeoutWork
                 )
-                PluginOperationLog.append(
-                    "LAUNCH FAILED \(commandDescription): \(SensitiveDataRedactor.redact(error.localizedDescription))",
-                    to: logURL
-                )
-                continuation.resume(throwing: PluginCommandError.failedToLaunch(error.localizedDescription))
+
+                do {
+                    try process.run()
+                } catch {
+                    timeoutWork.cancel()
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    guard completionGate.claim() else { return }
+                    AppLogger.plugins.error(
+                        "Plugin command launch failed: \(error.localizedDescription, privacy: .public)"
+                    )
+                    PluginOperationLog.append(
+                        "LAUNCH FAILED \(commandDescription): \(SensitiveDataRedactor.redact(error.localizedDescription))",
+                        to: logURL
+                    )
+                    continuation.resume(throwing: PluginCommandError.failedToLaunch(error.localizedDescription))
+                }
             }
+        } onCancel: {
+            // The owning Task was cancelled (e.g. the app is quitting): stop
+            // the command and its child tree instead of leaving orphans.
+            process.terminate()
+            DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+                if process.isRunning {
+                    Self.killProcessTree(root: process.processIdentifier)
+                }
+            }
+        }
+    }
+
+    /// TERM then KILL for a whole child tree (pnpm spawns nested node
+    /// processes for lifecycle scripts).
+    nonisolated static func killProcessTree(root pid: Int32, depth: Int = 0) {
+        guard depth < 8 else { return }
+        for child in directChildren(of: pid) {
+            killProcessTree(root: child, depth: depth + 1)
+        }
+        kill(pid, SIGKILL)
+    }
+
+    private nonisolated static func directChildren(of pid: Int32) -> [Int32] {
+        let process = Process()
+        let pipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/pgrep")
+        process.arguments = ["-P", "\(pid)"]
+        process.standardOutput = pipe
+        process.standardError = pipe
+        do {
+            try process.run()
+            process.waitUntilExit()
+            guard process.terminationStatus == 0 else { return [] }
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            return String(data: data, encoding: .utf8)?
+                .split(whereSeparator: \.isNewline)
+                .compactMap { Int32($0) } ?? []
+        } catch {
+            return []
         }
     }
 
@@ -305,6 +386,11 @@ final class PluginCommandRunner {
 }
 
 enum PluginOperationLog {
+    /// Cap on how many rotated plugin-operation logs are kept. The log is
+    /// append-only and plugin output can be large, so unbounded rotation
+    /// would eventually exhaust the disk.
+    private static let maxRotatedLogs = 5
+
     static func append(_ event: String, to url: URL) {
         let redacted = SensitiveDataRedactor.redact(event)
         let line = "[\(ISO8601DateFormatter().string(from: Date()))] \(redacted)\n"
@@ -317,10 +403,12 @@ enum PluginOperationLog {
             if let attributes = try? fileManager.attributesOfItem(atPath: url.path),
                let size = attributes[.size] as? NSNumber,
                size.intValue >= 1_000_000 {
-                let timestamp = Int(Date().timeIntervalSince1970)
                 let rotated = url.deletingLastPathComponent()
-                    .appendingPathComponent("plugin-operations-\(timestamp).log")
+                    .appendingPathComponent(
+                        "plugin-operations-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(8)).log"
+                    )
                 try? fileManager.moveItem(at: url, to: rotated)
+                pruneRotatedLogs(in: url.deletingLastPathComponent(), fileManager: fileManager)
             }
             if fileManager.fileExists(atPath: url.path) {
                 let handle = try FileHandle(forWritingTo: url)
@@ -337,24 +425,23 @@ enum PluginOperationLog {
             )
         }
     }
-}
 
-private final class PluginProcessOutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        data.append(chunk)
-        lock.unlock()
-    }
-
-    var stringValue: String {
-        lock.lock()
-        let snapshot = data
-        lock.unlock()
-        return String(data: snapshot, encoding: .utf8) ?? ""
+    private static func pruneRotatedLogs(in directory: URL, fileManager: FileManager) {
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        let rotated = entries
+            .filter { $0.lastPathComponent.hasPrefix("plugin-operations-") && $0.lastPathComponent.hasSuffix(".log") }
+            .sorted { lhs, rhs in
+                let lhsDate = (try? lhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                let rhsDate = (try? rhs.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate) ?? .distantPast
+                return lhsDate > rhsDate
+            }
+        for old in rotated.dropFirst(maxRotatedLogs) {
+            try? fileManager.removeItem(at: old)
+        }
     }
 }
 

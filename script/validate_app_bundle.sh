@@ -38,6 +38,16 @@ if [[ "$REQUIRE_BUNDLED_RUNTIME" == "1" || -d "$RUNTIME_ROOT" ]]; then
     || fail "bundled Runtime has no executable pnpm"
   if [[ -e "$RUNTIME_ROOT/node" ]]; then
     [[ -x "$RUNTIME_ROOT/node/bin/node" ]] || fail "bundled Node is present but not executable"
+    node_version="$("$RUNTIME_ROOT/node/bin/node" --version 2>&1)" \
+      || fail "bundled Node does not run: $node_version"
+    [[ "$node_version" =~ ^v[0-9]+ ]] || fail "bundled Node version output is invalid: $node_version"
+    echo "Bundled Node probe passed: $node_version"
+    probe_home="$(mktemp -d)"
+    trap 'rm -rf "$probe_home"' EXIT
+    PATH="$RUNTIME_ROOT/node/bin:$PATH" DSH_HOME="$probe_home" \
+      "$RUNTIME_ROOT/node_modules/.bin/dsh" --version >/dev/null 2>&1 \
+      || fail "bundled dsh does not run against the bundled Node"
+    echo "Bundled dsh probe passed."
   fi
 fi
 

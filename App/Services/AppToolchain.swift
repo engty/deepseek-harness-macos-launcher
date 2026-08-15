@@ -178,6 +178,12 @@ final class ToolchainInstaller {
         }
 
         try paths.prepare()
+        // A previous run that was killed mid-install can leave staging
+        // directories behind; they are never referenced and are safe to
+        // sweep. Plugin mutations are serialized by the launcher's operation
+        // gate, so no live install can be in flight here.
+        sweepStaleStaging(paths: paths)
+
         let destination = paths.toolchain
             .appendingPathComponent(manifest.id, isDirectory: true)
             .appendingPathComponent(manifest.version, isDirectory: true)
@@ -185,6 +191,21 @@ final class ToolchainInstaller {
         if fileManager.isExecutableFile(atPath: plan.executable.path),
            isInstalledManifestValid(plan: plan) {
             return plan
+        }
+        if fileManager.fileExists(atPath: destination.path) {
+            // The directory exists but is not trustworthy (corrupt manifest
+            // or tampered binary). Quarantine it and install fresh instead
+            // of failing forever with "directory already exists".
+            let quarantined = paths.toolchain
+                .appendingPathComponent(".invalid-\(UUID().uuidString)", isDirectory: true)
+            try? fileManager.createDirectory(
+                at: quarantined.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? fileManager.moveItem(at: destination, to: quarantined)
+            AppLogger.plugins.error(
+                "Quarantined inconsistent private toolchain directory: \(manifest.id) \(manifest.version)"
+            )
         }
 
         let request = URLRequest(url: manifest.artifactURL, cachePolicy: .reloadIgnoringLocalCacheData)
@@ -239,7 +260,7 @@ final class ToolchainInstaller {
             )
             guard !fileManager.fileExists(atPath: destination.path) else {
                 throw ToolchainInstallerError.installationFailed(
-                    "目标版本目录已存在但校验不一致，已保留原目录。"
+                    "目标版本目录在准备期间被占用，请重试。"
                 )
             }
             try fileManager.moveItem(at: staging, to: destination)
@@ -259,6 +280,18 @@ final class ToolchainInstaller {
             return false
         }
         return installed == plan.manifest
+    }
+
+    private func sweepStaleStaging(paths: AppPaths) {
+        let stagingRoot = paths.toolchain.appendingPathComponent(".staging", isDirectory: true)
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: stagingRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else { return }
+        for entry in entries {
+            try? fileManager.removeItem(at: entry)
+        }
     }
 
     private func isSafeExecutableName(_ name: String) -> Bool {

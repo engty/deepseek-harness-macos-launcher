@@ -59,12 +59,15 @@ struct LauncherCommands: Commands {
             Button("Install Plugin…") {
                 model.installPluginPrompt()
             }
+            .disabled(model.isOperationInProgress)
             Button("Stop Plugin…") {
                 model.stopPluginPrompt()
             }
+            .disabled(model.isOperationInProgress)
             Button("Remove Plugin…") {
                 model.removePluginPrompt()
             }
+            .disabled(model.isOperationInProgress)
 
             Divider()
 
@@ -81,11 +84,11 @@ struct LauncherCommands: Commands {
                             Button("Start Plugin") {
                                 Task { await model.setPluginEnabled(plugin, enabled: true) }
                             }
-                            .disabled(!(status == .stopped || status == .error))
+                            .disabled(!(status == .stopped || status == .error) || model.isOperationInProgress)
                             Button("Stop Plugin") {
                                 Task { await model.setPluginEnabled(plugin, enabled: false) }
                             }
-                            .disabled(!(status == .running || status == .starting))
+                            .disabled(!(status == .running || status == .starting) || model.isOperationInProgress)
                         }
                     }
                 }
@@ -103,6 +106,7 @@ struct LauncherCommands: Commands {
             Button("Restart DeepSeek Harness") {
                 Task { await model.restart() }
             }
+            .disabled(model.isOperationInProgress)
         }
     }
 }

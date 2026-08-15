@@ -33,6 +33,9 @@ final class RuntimeUpdateService {
         }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        // Whole-transfer deadline (the per-request timeout alone does not
+        // bound a slow drip of data).
+        configuration.timeoutIntervalForResource = 600
         let delegate = NoRedirectDelegate()
         self.session = URLSession(configuration: configuration, delegate: delegate, delegateQueue: nil)
     }
@@ -76,36 +79,76 @@ final class RuntimeUpdateService {
 
     func download(_ manifest: RuntimeManifest, to destination: URL) async throws -> URL {
         guard manifest.artifact.url.scheme == "https" else { throw RuntimeManifestError.invalidURL }
-        let (temporaryURL, response) = try await session.download(from: manifest.artifact.url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw RuntimeManifestError.invalidResponse
-        }
-
         let fileManager = FileManager.default
         try fileManager.createDirectory(at: destination, withIntermediateDirectories: true)
-        let target = destination.appendingPathComponent("\(manifest.runtimeID).artifact")
-        if fileManager.fileExists(atPath: target.path) { try fileManager.removeItem(at: target) }
-        try fileManager.moveItem(at: temporaryURL, to: target)
-        var artifactIsValid = false
+
+        // Unique per-attempt staging name: two overlapping downloads (or a
+        // stale one) can never remove or overwrite each other's file.
+        let target = destination.appendingPathComponent(
+            "\(manifest.runtimeID)-\(UUID().uuidString).artifact"
+        )
         defer {
-            if !artifactIsValid {
+            if fileManager.fileExists(atPath: target.path) {
                 try? fileManager.removeItem(at: target)
             }
         }
 
-        let attributes = try fileManager.attributesOfItem(atPath: target.path)
-        if let size = attributes[.size] as? NSNumber, manifest.artifact.size > 0,
-           size.int64Value != manifest.artifact.size {
-            throw RuntimeManifestError.artifactSizeMismatch
+        var lastError: Error = RuntimeManifestError.invalidResponse
+        // Transient network failures get a short bounded retry with backoff;
+        // hash/size mismatches do not (they would fail identically again).
+        for attempt in 0..<3 {
+            do {
+                var request = URLRequest(url: manifest.artifact.url)
+                request.timeoutInterval = 120
+                let (temporaryURL, response) = try await session.download(for: request)
+                guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                    throw RuntimeManifestError.invalidResponse
+                }
+                try fileManager.moveItem(at: temporaryURL, to: target)
+
+                let attributes = try fileManager.attributesOfItem(atPath: target.path)
+                guard let actualSize = (attributes[.size] as? NSNumber)?.int64Value else {
+                    throw RuntimeManifestError.artifactSizeMismatch
+                }
+                guard actualSize == manifest.artifact.size else {
+                    throw RuntimeManifestError.artifactSizeMismatch
+                }
+
+                let digest = try sha256Hex(of: target)
+                guard digest.caseInsensitiveCompare(manifest.artifact.sha256) == .orderedSame else {
+                    throw RuntimeManifestError.artifactHashMismatch
+                }
+                // Transfer ownership to the caller: a validated artifact must
+                // not be deleted by this function's defer.
+                let finalURL = destination.appendingPathComponent(
+                    "\(manifest.runtimeID)-\(UUID().uuidString).verified.artifact"
+                )
+                try fileManager.moveItem(at: target, to: finalURL)
+                return finalURL
+            } catch {
+                lastError = error
+                let permanent = error as? RuntimeManifestError == .artifactHashMismatch
+                    || error as? RuntimeManifestError == .artifactSizeMismatch
+                if permanent { break }
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: UInt64(attempt + 1) * 2_000_000_000)
+                }
+            }
         }
-        let digest = SHA256.hash(data: try Data(contentsOf: target))
-            .map { String(format: "%02x", $0) }
-            .joined()
-        guard digest.caseInsensitiveCompare(manifest.artifact.sha256) == .orderedSame else {
-            throw RuntimeManifestError.artifactHashMismatch
+        throw lastError
+    }
+
+    /// Streams the file in 1 MiB chunks instead of loading the whole
+    /// artifact into memory (`Data(contentsOf:)` previously made the hash
+    /// step an OOM risk for large runtimes).
+    private func sha256Hex(of url: URL) throws -> String {
+        let handle = try FileHandle(forReadingFrom: url)
+        defer { try? handle.close() }
+        var hasher = SHA256()
+        while let chunk = try handle.read(upToCount: 1_024 * 1_024), !chunk.isEmpty {
+            hasher.update(data: chunk)
         }
-        artifactIsValid = true
-        return target
+        return hasher.finalize().map { String(format: "%02x", $0) }.joined()
     }
 
     private var currentArchitecture: String {

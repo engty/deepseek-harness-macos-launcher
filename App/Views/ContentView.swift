@@ -75,6 +75,7 @@ struct ContentView: View {
                                 .font(.system(size: 14, weight: .medium))
                         }
                         .buttonStyle(.plain)
+                        .disabled(model.isOperationInProgress)
                         .help("下载 DeepSeek Harness 更新")
                     }
                 }
@@ -130,9 +131,10 @@ private struct StartupView: View {
 
                 HStack(spacing: 12) {
                     Button("Restart DeepSeek Harness") {
-                        Task { await model.start() }
+                        Task { await model.restart() }
                     }
                     .buttonStyle(.borderedProminent)
+                    .disabled(model.isOperationInProgress)
 
                     Button("Export Diagnostics") {
                         model.exportDiagnostics()

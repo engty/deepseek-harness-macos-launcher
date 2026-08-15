@@ -29,10 +29,20 @@ final class DeepSeekBalanceService {
     private let session: URLSession
 
     init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        // DEEPSEEK_BASE_URL is a local test/代理 hook; only structurally
+        // valid HTTPS URLs without credentials/query/fragment are accepted.
+        // (A local process that can set the environment can already read the
+        // on-disk credential, so this is input validation, not a boundary.)
         let configuredURL = environment["DEEPSEEK_BASE_URL"].flatMap(URL.init(string:))
-        baseURL = configuredURL?.scheme == "https"
-            ? configuredURL!
-            : URL(string: "https://api.deepseek.com")!
+        if let configuredURL,
+           configuredURL.scheme == "https",
+           let host = configuredURL.host, !host.isEmpty,
+           configuredURL.user == nil, configuredURL.password == nil,
+           configuredURL.query == nil, configuredURL.fragment == nil {
+            baseURL = configuredURL
+        } else {
+            baseURL = URL(string: "https://api.deepseek.com")!
+        }
 
         let configuration = URLSessionConfiguration.ephemeral
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
@@ -62,8 +72,22 @@ final class DeepSeekBalanceService {
         guard (200..<300).contains(http.statusCode) else {
             throw DeepSeekBalanceError.server(statusCode: http.statusCode)
         }
+        // Bound the response body: the real balance payload is a few hundred
+        // bytes, and an abnormal endpoint must not be able to balloon memory.
+        let maxBodyBytes = 1_024 * 1_024
+        if http.expectedContentLength > maxBodyBytes {
+            throw DeepSeekBalanceError.invalidResponse
+        }
+        guard data.count <= maxBodyBytes else {
+            throw DeepSeekBalanceError.invalidResponse
+        }
 
-        let decoded = try JSONDecoder().decode(DeepSeekBalanceResponse.self, from: data)
+        let decoded: DeepSeekBalanceResponse
+        do {
+            decoded = try JSONDecoder().decode(DeepSeekBalanceResponse.self, from: data)
+        } catch {
+            throw DeepSeekBalanceError.invalidResponse
+        }
         guard !decoded.balanceInfos.isEmpty else { throw DeepSeekBalanceError.emptyResponse }
         return decoded
     }

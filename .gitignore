@@ -14,6 +14,10 @@ dist/
 *.mobileprovision
 auth.json
 credentials.json
+.credentials.yaml
+.credentials.yml
+**/.credentials.yaml
+**/.credentials.yml
 
 # Logs and local archives
 *.log

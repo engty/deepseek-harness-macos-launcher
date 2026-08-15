@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   NODE_VERSION: '22.18.0'
@@ -27,11 +27,24 @@ jobs:
       - name: Build Swift package
         run: swift build
 
+  test:
+    name: Swift test (macOS 15 / Swift 6)
+    runs-on: macos-15
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+      - name: Run Swift test suite
+        run: swift test
+
   build-macos:
     name: Build macOS arm64 App
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: source-build
+    needs: [source-build, test]
     runs-on: macos-14
+    # Write access is required only for the tag release upload, never for
+    # pull_request or plain push builds.
+    permissions:
+      contents: write
     steps:
       - name: Check out source
         uses: actions/checkout@v4
@@ -80,6 +93,10 @@ jobs:
             shasum -a 256 \
               "DeepSeek-Harness-macos-arm64.dmg" > "SHA256SUMS.txt"
           )
+          # Verify the DMG itself and that the checksum manifest matches the
+          # exact file that will be uploaded.
+          hdiutil verify "$disk_image"
+          (cd "$RUNNER_TEMP" && shasum -a 256 -c SHA256SUMS.txt)
           cat "$RUNNER_TEMP/SHA256SUMS.txt"
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

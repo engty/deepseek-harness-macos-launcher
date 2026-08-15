@@ -14,6 +14,11 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var appUpdateState: AppUpdateState = .idle
     @Published private(set) var balanceState: DeepSeekBalanceState = .notConfigured
     @Published private(set) var isBalanceConfigured = false
+    /// True while a slot-mutating operation (plugin install/remove/start/stop,
+    /// restart, Runtime update activation) is running. New such operations are
+    /// rejected instead of interleaving, because concurrent operations would
+    /// clone/activate the same data slot and silently lose user configuration.
+    @Published private(set) var isOperationInProgress = false
 
     let paths: AppPaths
     private let locator: RuntimeLocator
@@ -36,6 +41,14 @@ final class LauncherModel: ObservableObject {
     private var balanceRefreshTask: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
     private var consecutiveCrashCount = 0
+    /// Bumped whenever a user-facing operation changes the desired state.
+    /// The delayed crash-recovery task only restarts Harness when the
+    /// generation is unchanged, so a manual stop/restart/mutation in the
+    /// meantime cancels the automatic recovery instead of "ghost restarting".
+    private var operationGeneration = UUID()
+    private var crashRecoveryTask: Task<Void, Never>?
+    private var balanceRequestID = UUID()
+    private var updateRequestID = UUID()
 
     init(
         paths: AppPaths = AppPaths(),
@@ -58,6 +71,7 @@ final class LauncherModel: ObservableObject {
         }
         do {
             try paths.prepare()
+            dataSlotManager.recoverPendingTransaction(paths: paths)
             plugins = profileManager.refresh()
             // Restore the binding state from Keychain. The item is created
             // without an access-control prompt, so a non-interactive read is
@@ -117,6 +131,7 @@ final class LauncherModel: ObservableObject {
         lastError = nil
         do {
             try paths.prepare()
+            dataSlotManager.recoverPendingTransaction(paths: paths)
             let installation = try locator.locate()
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
@@ -143,6 +158,12 @@ final class LauncherModel: ObservableObject {
     }
 
     func stop() async {
+        bumpOperationGeneration()
+        crashRecoveryTask?.cancel()
+        crashRecoveryTask = nil
+        // A plugin command must not outlive the launcher: pnpm and lifecycle
+        // scripts would otherwise keep running as orphans.
+        pluginRunner.cancelActiveCommand()
         guard processController.isRunning else {
             phase = .stopped
             return
@@ -153,8 +174,39 @@ final class LauncherModel: ObservableObject {
     }
 
     func restart() async {
+        guard beginExclusiveOperation() else { return }
+        defer { endExclusiveOperation() }
         await stop()
         await start()
+    }
+
+    /// Serializes every operation that clones or swaps the active data slot
+    /// (plugin mutations, enable/disable, restart, Runtime update activation).
+    /// Overlapping operations used to be possible because each menu entry
+    /// launched its own `Task`; two such tasks could clone the same active
+    /// slot and then activate their own candidates, silently losing one
+    /// operation's result or leaving the active slot half-switched.
+    private func beginExclusiveOperation(notifyBusy: Bool = true) -> Bool {
+        guard !isOperationInProgress else {
+            if notifyBusy {
+                presentInfoAlert(
+                    title: "已有操作正在进行",
+                    message: "请等待当前 DeepSeek Harness 操作完成后再试。"
+                )
+            }
+            return false
+        }
+        isOperationInProgress = true
+        bumpOperationGeneration()
+        return true
+    }
+
+    private func endExclusiveOperation() {
+        isOperationInProgress = false
+    }
+
+    private func bumpOperationGeneration() {
+        operationGeneration = UUID()
     }
 
     func setPluginEnabled(_ plugin: HarnessPlugin, enabled: Bool) async {
@@ -163,6 +215,8 @@ final class LauncherModel: ObservableObject {
 
     func setPluginsEnabled(_ selectedPlugins: [HarnessPlugin], enabled: Bool) async {
         guard !selectedPlugins.isEmpty else { return }
+        guard beginExclusiveOperation() else { return }
+        defer { endExclusiveOperation() }
         let wasRunning = processController.isRunning
         selectedPlugins.forEach {
             pluginOperationStates[$0.id] = enabled ? .starting : .stopping
@@ -287,8 +341,18 @@ final class LauncherModel: ObservableObject {
         ) else { return }
 
         do {
-            try balanceKeychain.save(apiKey)
+            // The credential FILE is Harness's source of truth, so write and
+            // verify it first. A Keychain failure afterwards must not leave
+            // the file silently un-updated while the UI claims success.
             try deepSeekCredentialStore.write(apiKey, to: paths.dshHome)
+            SensitiveDataRedactor.registerLiteralSecret(apiKey)
+            do {
+                try balanceKeychain.save(apiKey)
+            } catch {
+                AppLogger.launcher.error(
+                    "DeepSeek API Key saved to the credential file but not to Keychain: \(error.localizedDescription)"
+                )
+            }
             isBalanceConfigured = true
             scheduleBalanceRefresh()
         } catch {
@@ -298,6 +362,8 @@ final class LauncherModel: ObservableObject {
     }
 
     func refreshBalance() async {
+        let requestID = UUID()
+        balanceRequestID = requestID
         let apiKey: String?
         do {
             apiKey = try synchronizeDeepSeekCredential()
@@ -317,8 +383,12 @@ final class LauncherModel: ObservableObject {
         balanceState = .loading
         do {
             let response = try await balanceService.fetch(apiKey: apiKey)
+            // A slow earlier request must not overwrite the result of a newer
+            // one (for example right after the user replaced the key).
+            guard requestID == balanceRequestID else { return }
             balanceState = .available(response.balanceInfos)
         } catch {
+            guard requestID == balanceRequestID else { return }
             balanceState = .failed(error.localizedDescription)
         }
     }
@@ -382,8 +452,14 @@ final class LauncherModel: ObservableObject {
         allowedBuildScripts: [String] = [],
         restartAfterMutation: Bool? = nil,
         attemptDependencyRecovery: Bool = true,
-        attemptBuildScriptApproval: Bool = true
+        attemptBuildScriptApproval: Bool = true,
+        holdsExclusiveLock: Bool = false
     ) async {
+        if !holdsExclusiveLock {
+            guard beginExclusiveOperation() else { return }
+        }
+        defer { if !holdsExclusiveLock { endExclusiveOperation() } }
+
         guard let installation = try? locator.locate() else {
             let message = "插件管理需要可执行的 Harness Runtime。"
             phase = .runtimeMissing(message)
@@ -453,7 +529,8 @@ final class LauncherModel: ObservableObject {
                         allowedBuildScripts: packages,
                         restartAfterMutation: wasRunning,
                         attemptDependencyRecovery: true,
-                        attemptBuildScriptApproval: false
+                        attemptBuildScriptApproval: false,
+                        holdsExclusiveLock: true
                     )
                     return
                 } catch {
@@ -504,7 +581,8 @@ final class LauncherModel: ObservableObject {
                         dependencyPlan: retryPlan,
                         additionalToolRequirements: additionalToolRequirements + [requirement],
                         restartAfterMutation: wasRunning,
-                        attemptDependencyRecovery: false
+                        attemptDependencyRecovery: false,
+                        holdsExclusiveLock: true
                     )
                     return
                 } catch {
@@ -549,21 +627,35 @@ final class LauncherModel: ObservableObject {
         let message = output.isEmpty ? "Harness sidecar unexpectedly exited." : output
         lastError = message
         phase = .failed("Harness sidecar unexpectedly exited.\n\(message)")
+        let generation = operationGeneration
         guard consecutiveCrashCount <= 3 else {
-            Task { [weak self] in
+            crashRecoveryTask?.cancel()
+            crashRecoveryTask = Task { [weak self] in
                 await self?.recoverLastKnownGoodRuntime()
             }
             return
         }
         let retryDelay = UInt64(consecutiveCrashCount) * 1_000_000_000
-        Task { [weak self] in
+        crashRecoveryTask?.cancel()
+        crashRecoveryTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: retryDelay)
-            guard !Task.isCancelled else { return }
-            await self?.start()
+            guard !Task.isCancelled, let self else { return }
+            // Only restart when nothing else changed the desired state while
+            // we slept; otherwise the automatic recovery would override a
+            // manual stop/restart/mutation ("ghost restart").
+            guard self.operationGeneration == generation else { return }
+            await self.start()
         }
     }
 
     private func recoverLastKnownGoodRuntime() async {
+        guard beginExclusiveOperation(notifyBusy: false) else {
+            AppLogger.launcher.error(
+                "Skipped last-known-good Runtime recovery because another operation is in progress."
+            )
+            return
+        }
+        defer { endExclusiveOperation() }
         guard let fallback = try? locator.locateLastKnownGood() else { return }
         do {
             try runtimeInstaller.restoreLastKnownGood(paths: paths)
@@ -623,8 +715,20 @@ final class LauncherModel: ObservableObject {
     /// legacy item can trigger an authorization sheet after an App replacement.
     /// The Keychain value is used only as a fallback when the file is missing.
     private func synchronizeDeepSeekCredential() throws -> String? {
-        let fileValue = try deepSeekCredentialStore.read(from: paths.dshHome)
+        let fileValue: String?
+        do {
+            fileValue = try deepSeekCredentialStore.read(from: paths.dshHome)
+        } catch {
+            // A malformed credential document must not brick the balance
+            // feature while a valid Keychain copy exists: fall back and
+            // repair the file below.
+            AppLogger.launcher.error(
+                "Credential file is unreadable, falling back to Keychain: \(error.localizedDescription)"
+            )
+            fileValue = nil
+        }
         if let fileValue, !fileValue.isEmpty {
+            SensitiveDataRedactor.registerLiteralSecret(fileValue)
             isBalanceConfigured = true
             return fileValue
         }
@@ -641,14 +745,18 @@ final class LauncherModel: ObservableObject {
             return nil
         }
         try deepSeekCredentialStore.write(keychainValue, to: paths.dshHome)
+        SensitiveDataRedactor.registerLiteralSecret(keychainValue)
         isBalanceConfigured = true
         return keychainValue
     }
 
     private func checkForUpdates(presentResult: Bool) async {
+        let requestID = UUID()
+        updateRequestID = requestID
         updateState = .checking
         do {
             let result = try await updateService.check(currentHarnessVersion: runtimeVersion)
+            guard requestID == updateRequestID else { return }
             if result.isUpdateAvailable {
                 latestManifest = result.manifest
                 updateState = .available(result.manifest.runtimeID)
@@ -659,6 +767,7 @@ final class LauncherModel: ObservableObject {
                 if presentResult { presentInfoAlert(title: "Harness Runtime 已是最新", message: result.manifest.runtimeID) }
             }
         } catch {
+            guard requestID == updateRequestID else { return }
             latestManifest = nil
             updateState = .failed(error.localizedDescription)
             if presentResult {
@@ -712,6 +821,8 @@ final class LauncherModel: ObservableObject {
     }
 
     private func downloadLatestUpdate(_ manifest: RuntimeManifest) async {
+        guard beginExclusiveOperation() else { return }
+        defer { endExclusiveOperation() }
         updateState = .checking
         do {
             let destination = paths.caches.appendingPathComponent("updates/staging", isDirectory: true)
@@ -736,7 +847,7 @@ final class LauncherModel: ObservableObject {
         if wasRunning { await processController.stop() }
 
         do {
-            let candidateSlot = try dataSlotManager.cloneActiveSlot(paths: paths)
+            let candidateSlot = try await dataSlotManager.cloneActiveSlot(paths: paths)
             let newActivation = try await runtimeInstaller.activate(
                 manifest: manifest,
                 artifactURL: artifactURL,
@@ -788,6 +899,10 @@ final class LauncherModel: ObservableObject {
             } else {
                 phase = .stopped
             }
+            // Every successful update used to leave the entire previous
+            // Runtime tree on disk forever; remove versions that are no
+            // longer referenced by any pointer.
+            runtimeInstaller.cleanupOrphanedRuntimes(paths: paths)
             updateState = .downloaded(artifactURL.path)
             presentInfoAlert(
                 title: "DeepSeek Harness 已更新",
