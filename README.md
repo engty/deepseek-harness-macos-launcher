@@ -13,7 +13,7 @@
 
 GitHub Release 只提供 DMG，避免为同一个 App 保存两份近乎相同的发行包。打开 DMG 后，直接把窗口中的 `DeepSeek Harness.app` 拖到旁边的 `Applications` 快捷方式即可完成安装。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
 
-源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js、`@deepseek-ai/dsh` 与 `pnpm`，再把 Runtime Bundle 放进 App。插件命令使用 App 私有 PATH，不会修改用户的 Shell 配置、Homebrew 或全局 npm/pnpm。
+源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js、`@deepseek-ai/dsh` 与 `pnpm`，再把 Runtime Bundle 放进 App。插件命令使用 App 私有 PATH，不会修改用户的 Shell 配置、Homebrew 或全局 npm/pnpm。若 pnpm 10 阻止插件的 prepare/build script，App 会在确认后只为精确包名写入 staging profile 的 `allowBuilds`。
 
 ### 首次运行显示“App 已损坏”
 
@@ -87,6 +87,8 @@ Plugins 菜单使用官方 `dsh plugin --profile web ...` 语义。安装时可�
 顶栏绿色/红色圆点分别表示 Harness 已运行/未运行，旁边显示当前 `@deepseek-ai/dsh` 版本。检测到受控 HTTPS Runtime manifest 更新后会显示圆形下载按钮；artifact 通过 SHA-256、大小、架构、归档安全和候选启动检查。余额按钮首次使用时将 DeepSeek API Key 保存到 macOS Keychain，并调用官方余额接口；应用重新启动后会自动恢复这个绑定，之后每 60 秒自动刷新。只有用户主动点击余额区域或菜单中的“Change DeepSeek API Key…”才会替换已保存的 Key。Key 不会写入仓库、WebView、日志或诊断包。
 
 Runtime artifact 现已支持 HTTPS feed、SHA-256、`minShellVersion`、tar archive 安全检查、base `--version`/`--dump-config` 预检、实际用户 data slot 候选启动、候选 Runtime 激活和失败回滚。Runtime feed 不使用公钥签名，适合受控分发，不提供供应链签名安全保证。插件安装/删除也会在完整 data slot 副本中执行官方命令，成功后原子切换，失败时保留旧 slot。
+
+插件依赖还支持受控的 App 私有工具链恢复：当前只允许清单中的 jq 1.7.1，下载会校验 HTTPS、固定大小、SHA-256、可执行文件名和来源；未知依赖不会被自动执行或安装。对常用于公开仓库的 `github:owner/repo` shorthand，App 会在不经过 Shell 的前提下转换为 HTTPS Git URL，避免 Finder 启动时依赖交互式 SSH agent；显式 `git+ssh` 地址仍保持原语义。
 
 插件变更前会显示 spec 和 lifecycle/build script 风险确认；sidecar 输出、错误和诊断文件统一脱敏。Harness WebView 只允许当前 loopback origin，只有用户主动点击的 HTTPS 外链才会交给系统浏览器。
 插件事务还会把解析版本、来源、license 和 lifecycle script 标志写入当前 data slot 的 `dsh-home/launcher/plugin-metadata.json`，仅供用户查看来源风险，不会复制插件源码到 App Shell。

@@ -19,6 +19,17 @@ struct PluginCommandParserTests {
     }
 
     @Test
+    func normalizesPublicGitHubShorthandForFinderLaunchedApps() throws {
+        let result = try PluginCommandParser.parseInstallCommand(
+            "dsh plugin --profile web add github:mishibeikejie/zat-dsh-engine#main"
+        )
+        #expect(result == [
+            "add",
+            "https://github.com/mishibeikejie/zat-dsh-engine.git#main"
+        ])
+    }
+
+    @Test
     func rejectsNonInstallOrShellCommands() {
         #expect(throws: PluginCommandParserError.unsupportedCommand) {
             try PluginCommandParser.parseInstallCommand("dsh plugin --profile web remove dsh-llm-codex")

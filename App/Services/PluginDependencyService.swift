@@ -32,6 +32,7 @@ struct ResolvedPluginDependency: Equatable {
 struct PluginDependencyPlan: Equatable {
     let dependencies: [ResolvedPluginDependency]
     let searchPath: String
+    let toolchainInstallPlans: [ToolchainInstallPlan]
 
     var usesUserTools: Bool {
         dependencies.contains { $0.source == .user }
@@ -39,12 +40,17 @@ struct PluginDependencyPlan: Equatable {
 
     var confirmationText: String {
         let dependencyLines = dependencies.map(\.confirmationLine).joined(separator: "\n")
+        let installLines = toolchainInstallPlans.map(\.confirmationText).joined(separator: "\n")
+        let installText = installLines.isEmpty
+            ? ""
+            : "\n\n需要用户确认后安装的 App 私有依赖：\n\(installLines)"
         return """
         插件基础依赖：
         \(dependencyLines)
 
         PATH 只会传给 DeepSeek Harness 的插件子进程，不会修改系统 PATH、Shell 配置或全局包。
         插件及其 Node.js 依赖只会写入 App 私有 DSH_HOME。
+        \(installText)
         """
     }
 }
@@ -80,10 +86,12 @@ struct PluginDependencyService {
 
     func resolve(
         installation: RuntimeInstallation,
-        arguments: [String]
+        arguments: [String],
+        additionalRequirements: [ToolchainRequirement] = []
     ) throws -> PluginDependencyPlan {
         var dependencies: [ResolvedPluginDependency] = []
         var missing: [String] = []
+        var installPlans: [ToolchainInstallPlan] = []
 
         if let pnpm = resolvePNPM(installation: installation) {
             dependencies.append(pnpm)
@@ -104,10 +112,29 @@ struct PluginDependencyService {
             }
         }
 
+        for requirement in additionalRequirements {
+            if let tool = resolvePrivateTool(requirement) {
+                dependencies.append(tool)
+            } else if let manifest = ToolchainCatalog.bundled.manifest(for: requirement),
+                      let privateToolchainRoot {
+                installPlans.append(
+                    ToolchainInstallPlan(
+                        manifest: manifest,
+                        destination: privateToolchainRoot
+                            .appendingPathComponent(manifest.id, isDirectory: true)
+                            .appendingPathComponent(manifest.version, isDirectory: true)
+                    )
+                )
+            } else {
+                missing.append(requirement.id)
+            }
+        }
+
         guard missing.isEmpty else { throw PluginDependencyError.missing(missing) }
         return PluginDependencyPlan(
             dependencies: dependencies,
-            searchPath: searchPath(installation: installation, dependencies: dependencies)
+            searchPath: searchPath(installation: installation, dependencies: dependencies),
+            toolchainInstallPlans: installPlans
         )
     }
 
@@ -117,6 +144,28 @@ struct PluginDependencyService {
     func runtimeSearchPath(installation: RuntimeInstallation) -> String {
         let dependencies = [resolvePNPM(installation: installation)].compactMap { $0 }
         return searchPath(installation: installation, dependencies: dependencies)
+    }
+
+    static func installableRequirement(from output: String) -> ToolchainRequirement? {
+        let normalized = output.lowercased()
+        for requirement in [ToolchainRequirement(id: "jq", version: "1.7.1")] {
+            let id = NSRegularExpression.escapedPattern(for: requirement.id)
+            let patterns = [
+                "\\b\(id):\\s*command not found\\b",
+                "\\bcommand not found:\\s*\(id)\\b",
+                "\\bspawn\\s+\(id)\\s+enoent\\b",
+                "\\benoent\\b.{0,80}\\b\(id)\\b"
+            ]
+            if patterns.contains(where: {
+                (try? NSRegularExpression(pattern: $0))?.firstMatch(
+                    in: normalized,
+                    range: NSRange(normalized.startIndex..<normalized.endIndex, in: normalized)
+                ) != nil
+            }) {
+                return requirement
+            }
+        }
+        return nil
     }
 
     func applying(
@@ -193,7 +242,7 @@ struct PluginDependencyService {
             directories.append(nodeDirectory)
         }
         if let privateToolchainRoot {
-            directories.append(privateToolchainRoot.appendingPathComponent("bin").path)
+            directories.append(contentsOf: privateToolchainBinDirectories(root: privateToolchainRoot))
         }
         directories.append(contentsOf: ["/usr/bin", "/bin", "/usr/sbin", "/sbin"])
         if let configuredPath = baseEnvironment["PATH"] {
@@ -251,6 +300,51 @@ struct PluginDependencyService {
             if let version = object["version"] as? String { return version }
         }
         return nil
+    }
+
+    private func resolvePrivateTool(_ requirement: ToolchainRequirement) -> ResolvedPluginDependency? {
+        guard let privateToolchainRoot,
+              let manifest = ToolchainCatalog.bundled.manifest(for: requirement) else {
+            return nil
+        }
+        let executable = privateToolchainRoot
+            .appendingPathComponent(manifest.id, isDirectory: true)
+            .appendingPathComponent(manifest.version, isDirectory: true)
+            .appendingPathComponent("bin", isDirectory: true)
+            .appendingPathComponent(manifest.executableName)
+        guard isExecutable(executable) else { return nil }
+        return ResolvedPluginDependency(
+            name: manifest.id,
+            executable: executable,
+            version: manifest.version,
+            source: .bundled
+        )
+    }
+
+    private func privateToolchainBinDirectories(root: URL) -> [String] {
+        var directories = [root.appendingPathComponent("bin").path]
+        guard let toolNames = try? fileManager.contentsOfDirectory(
+            at: root,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        ) else {
+            return directories
+        }
+        for toolName in toolNames {
+            guard (try? toolName.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  let versions = try? fileManager.contentsOfDirectory(
+                      at: toolName,
+                      includingPropertiesForKeys: [.isDirectoryKey],
+                      options: [.skipsHiddenFiles]
+                  ) else { continue }
+            directories.append(contentsOf: versions.compactMap { version in
+                guard (try? version.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else {
+                    return nil
+                }
+                return version.appendingPathComponent("bin").path
+            })
+        }
+        return directories
     }
 
     private func isExecutable(_ url: URL) -> Bool {

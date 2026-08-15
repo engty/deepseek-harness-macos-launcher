@@ -8,6 +8,7 @@ struct PluginCommandResult {
 enum PluginCommandError: LocalizedError {
     case failedToLaunch(String)
     case nonZeroExit(String)
+    case buildScriptsRequireApproval([String], output: String)
 
     var errorDescription: String? {
         switch self {
@@ -15,6 +16,8 @@ enum PluginCommandError: LocalizedError {
             return "无法启动 Harness 插件命令：\(message)"
         case .nonZeroExit(let output):
             return "插件命令执行失败。\n\(output)"
+        case .buildScriptsRequireApproval(let packages, let output):
+            return "pnpm 阻止了插件 build script：\(packages.joined(separator: "、"))。\n\(output)"
         }
     }
 }
@@ -24,18 +27,24 @@ final class PluginCommandRunner {
     func dependencyPlan(
         installation: RuntimeInstallation,
         paths: AppPaths,
-        arguments: [String]
+        arguments: [String],
+        additionalRequirements: [ToolchainRequirement] = []
     ) throws -> PluginDependencyPlan {
         try PluginDependencyService(
             privateToolchainRoot: paths.toolchain
-        ).resolve(installation: installation, arguments: arguments)
+        ).resolve(
+            installation: installation,
+            arguments: arguments,
+            additionalRequirements: additionalRequirements
+        )
     }
 
     func mutateProfile(
         installation: RuntimeInstallation,
         paths: AppPaths,
         arguments: [String],
-        dependencyPlan: PluginDependencyPlan? = nil
+        dependencyPlan: PluginDependencyPlan? = nil,
+        allowedBuildScripts: [String] = []
     ) async throws -> PluginCommandResult {
         let dependencyPlan = try dependencyPlan ?? self.dependencyPlan(
             installation: installation,
@@ -49,6 +58,21 @@ final class PluginCommandRunner {
         let stagingProfile = stagingHome.appendingPathComponent("profiles/web", isDirectory: true)
         let metadataStore = PluginMetadataStore()
         try FileManager.default.createDirectory(at: stagingProfile, withIntermediateDirectories: true)
+        PluginOperationLog.append(
+            "DEPENDENCY PLAN \(dependencyPlan.dependencies.map { "\($0.name)=\($0.version ?? "unknown") [\($0.source.displayName)]" }.joined(separator: ", "))",
+            to: paths.pluginOperationsLog
+        )
+        if !allowedBuildScripts.isEmpty {
+            do {
+                try PnpmWorkspaceConfig.approveBuildScripts(
+                    allowedBuildScripts,
+                    in: stagingProfile
+                )
+            } catch {
+                try? FileManager.default.removeItem(at: stagingRoot)
+                throw error
+            }
+        }
 
         let result: PluginCommandResult
         do {
@@ -73,6 +97,13 @@ final class PluginCommandRunner {
         }
 
         guard result.status == 0 else {
+            if let packages = Self.parseBuildApprovalPackages(result.output) {
+                try? FileManager.default.removeItem(at: stagingRoot)
+                throw PluginCommandError.buildScriptsRequireApproval(
+                    packages,
+                    output: Self.redact(result.output)
+                )
+            }
             try? FileManager.default.removeItem(at: stagingRoot)
             throw PluginCommandError.nonZeroExit(Self.redact(result.output))
         }
@@ -244,6 +275,32 @@ final class PluginCommandRunner {
             .split(separator: "\n")
             .suffix(80)
             .joined(separator: "\n")
+    }
+
+    nonisolated static func parseBuildApprovalPackages(_ output: String) -> [String]? {
+        let marker = #"(?im)ignored build scripts:\s*([^\r\n]+)"#
+        guard let markerRegex = try? NSRegularExpression(pattern: marker),
+              let match = markerRegex.firstMatch(
+                  in: output,
+                  range: NSRange(output.startIndex..<output.endIndex, in: output)
+              ),
+              let lineRange = Range(match.range(at: 1), in: output) else { return nil }
+        let line = String(output[lineRange])
+        let pattern = #"(?:(?:@[\w._-]+/)?[\w._-]+)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return nil }
+        let candidates = regex.matches(
+            in: line,
+            range: NSRange(line.startIndex..<line.endIndex, in: line)
+        ).compactMap { match -> String? in
+            guard let range = Range(match.range, in: line) else { return nil }
+            let value = String(line[range])
+            let ignored = Set(["allowBuilds", "ignored", "build", "scripts", "run", "pnpm"])
+            return ignored.contains(value.lowercased()) ? nil : value
+        }
+        let unique = Array(Set(candidates)).filter {
+            $0.contains("/") || $0.range(of: #"^[a-z0-9._-]+$"#, options: [.regularExpression]) != nil
+        }.sorted()
+        return unique.isEmpty ? nil : unique
     }
 }
 

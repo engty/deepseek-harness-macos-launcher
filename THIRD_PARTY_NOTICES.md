@@ -35,6 +35,13 @@ their authors. A release artifact built with the workflow includes the
 Runtime dependency tree; inspect the corresponding upstream package metadata
 before redistributing a modified artifact.
 
+The controlled private-toolchain recovery list currently includes jq 1.7.1:
+
+- Repository: <https://github.com/jqlang/jq>
+- License: MIT
+- The Launcher downloads only the architecture-specific release asset whose
+  URL, size, SHA-256, source, and license are pinned in the application code.
+
 ## Trademarks and service terms
 
 DeepSeek, Harness, Codex, ChatGPT, and OpenAI are names and marks of their

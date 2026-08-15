@@ -1,6 +1,6 @@
 # DeepSeek Harness App 插件依赖管理方案
 
-> 文档状态：阶段 1 已实现，阶段 2/3/4 按计划推进
+> 文档状态：阶段 1/2/3 已实现，阶段 4 等待 Harness 上游依赖声明协议
 >
 > 文档版本：0.1
 >
@@ -46,6 +46,11 @@ dsh: pnpm not found on PATH — install pnpm to manage profile plugins
 ```
 
 同一命令在终端中可以成功，是因为终端 PATH 包含用户的 nvm 目录。这说明依赖用户终端环境的做法不可重复，也不符合 App 的产品目标。
+
+另外，pnpm 会把常用于公开仓库的 `github:owner/repository` shorthand 解析成 GitHub SSH 地址。
+Finder 启动的 App 不应依赖交互式 SSH agent，因此 Launcher 对这个严格 shorthand 形态转换为
+HTTPS Git URL；用户明确输入的 `git+ssh`、`git@github.com` 或其他显式地址保持原语义。私有仓库
+应使用用户明确配置好的 HTTPS 凭证或显式 SSH 地址。
 
 当前还有两个伴随问题：
 
@@ -186,6 +191,10 @@ git+https://...
 git@github.com:...
 https://github.com/...git
 ```
+
+`github:owner/repository` 的严格 shorthand 在进入官方命令前会转换为
+`https://github.com/owner/repository.git`（保留 `#ref`）。这只是解决 Finder 环境没有 SSH agent
+的问题，不会把显式 SSH 地址改写成 HTTPS。
 
 ### 6.2 插件声明的额外依赖
 
@@ -347,6 +356,10 @@ App 不应让确认框关闭后长时间没有反馈，也不应在 Harness 重�
 和 pnpm；Harness sidecar、插件命令和候选预检共用 App 私有 PATH。插件操作输出会持续读取、
 脱敏并写入 ~/Library/Logs/com.harness.desktop.launcher/plugin-operations.log。
 
+阶段 1 之后补充了 pnpm 10 的 build-script 安全流程：当官方 Harness 输出明确的
+`Ignored build scripts` 包名时，Launcher 会要求用户确认，只把这些精确包名写入 staging
+profile 的 `pnpm-workspace.yaml` `allowBuilds`，然后重新执行官方命令。
+
 验收插件：
 
 ```text
@@ -360,6 +373,9 @@ dsh plugin --profile web add github:mishibeikejie/zat-dsh-engine
 - 为 App 私有工具建立版本目录、manifest、校验和清理规则。
 - Harness sidecar、插件命令和候选预检使用同一套环境构造逻辑。
 
+当前阶段已落地：`AppToolchain` 提供固定版本清单、App Support 下的版本目录、manifest
+记录和统一 PATH；Harness、插件命令和候选预检都通过同一个依赖服务读取这些目录。
+
 ### 阶段 3：受控依赖自动安装
 
 - 增加允许列表依赖清单。
@@ -367,11 +383,20 @@ dsh plugin --profile web add github:mishibeikejie/zat-dsh-engine
 - 增加“安装依赖并继续”确认流程和下载进度。
 - 只选择一个体积小、无管理员权限的测试工具完成端到端验证。
 
+当前阶段已落地：受控清单包含 jq 1.7.1（按 arm64/x86_64 固定 URL、大小、SHA-256、来源和
+许可证），仅在插件失败明确报告 jq 缺失且用户再次确认后下载到 App 私有目录。下载结果会
+进行 HTTPS、大小、SHA-256、可执行文件名和原子目录激活校验；未知工具、Homebrew 和
+管理员权限依赖仍然只提示，不会自动执行。
+
 ### 阶段 4：上游依赖声明兼容
 
 - 跟踪 Harness 是否增加正式系统依赖声明。
 - 若上游提供稳定字段，优先采用上游协议并废弃 Launcher 私有映射。
 - 保持旧 Runtime 的兼容回退，但不扩展为第三方插件市场或通用系统包管理器。
+
+截至本次实现审计，Harness 上游公开的插件协议仍然是把参数转发给 pnpm，并没有稳定的
+系统依赖声明字段。Launcher 因此没有发明新的强制 manifest 字段；当前只支持受控清单和
+pnpm 官方 allowBuilds 提示，后续上游提供正式字段后再接入。
 
 ## 13. 阶段 1 验收标准
 
@@ -409,11 +434,11 @@ dsh plugin --profile web add github:mishibeikejie/zat-dsh-engine
 
 ## 15. 推荐评审结论
 
-建议批准以下最小、可维护路径：
+阶段 1、2、3 已按本文方案落地，建议后续按以下顺序维护：
 
-1. 先实施阶段 1，彻底解决 pnpm、PATH、日志和结果提示。
-2. 验证 `zat-dsh-engine`、npm 包插件和现有 `dsh-llm-codex`。
-3. 阶段 1 稳定后再实现通用 App 私有工具链下载器。
-4. 在没有上游正式依赖声明前，不扩大为任意系统依赖自动安装器。
+1. 使用 `zat-dsh-engine`、npm 包插件和现有 `dsh-llm-codex` 做回归验证。
+2. 继续保持受控依赖清单小而明确；新增工具必须补齐固定版本、架构、大小、SHA-256、来源和许可证。
+3. 在没有上游正式依赖声明前，不扩大为任意系统依赖自动安装器。
+4. Harness 上游出现正式依赖声明字段后，再单独评审协议接入和旧 Runtime 兼容策略。
 
 这样既实现“用户不需要终端”的产品价值，也保留清晰的安全和维护边界。

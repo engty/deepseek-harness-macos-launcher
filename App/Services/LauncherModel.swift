@@ -21,6 +21,7 @@ final class LauncherModel: ObservableObject {
     private let pluginRunner: PluginCommandRunner
     private let updateService: RuntimeUpdateService
     private let runtimeInstaller: RuntimeArchiveInstaller
+    private let toolchainInstaller: ToolchainInstaller
     private let dataSlotManager: DataSlotManager
     private let runtimePreflight: RuntimePreflightService
     private let balanceService: DeepSeekBalanceService
@@ -45,6 +46,7 @@ final class LauncherModel: ObservableObject {
         pluginRunner = PluginCommandRunner()
         updateService = RuntimeUpdateService()
         runtimeInstaller = RuntimeArchiveInstaller()
+        toolchainInstaller = ToolchainInstaller()
         dataSlotManager = DataSlotManager()
         runtimePreflight = RuntimePreflightService()
         balanceService = DeepSeekBalanceService()
@@ -364,7 +366,12 @@ final class LauncherModel: ObservableObject {
         arguments: [String],
         operation: String,
         userOperation: String,
-        dependencyPlan: PluginDependencyPlan
+        dependencyPlan: PluginDependencyPlan,
+        additionalToolRequirements: [ToolchainRequirement] = [],
+        allowedBuildScripts: [String] = [],
+        restartAfterMutation: Bool? = nil,
+        attemptDependencyRecovery: Bool = true,
+        attemptBuildScriptApproval: Bool = true
     ) async {
         guard let installation = try? locator.locate() else {
             let message = "插件管理需要可执行的 Harness Runtime。"
@@ -374,25 +381,28 @@ final class LauncherModel: ObservableObject {
             return
         }
 
-        let wasRunning = processController.isRunning
+        let wasRunning = restartAfterMutation ?? processController.isRunning
         phase = .busy(operation)
-        if wasRunning { await processController.stop() }
+        if restartAfterMutation == nil, wasRunning {
+            await processController.stop()
+        }
 
         do {
             _ = try await pluginRunner.mutateProfile(
                 installation: installation,
                 paths: paths,
                 arguments: arguments,
-                dependencyPlan: dependencyPlan
+                dependencyPlan: dependencyPlan,
+                allowedBuildScripts: allowedBuildScripts
             )
             plugins = profileManager.refresh()
             if wasRunning {
                 await start()
                 guard phase.isReady else {
                     let restartError = lastError ?? "Harness 重启失败。"
-                    lastError = "插件(userOperation)已完成，但 Harness 重启失败：(restartError)"
+                    lastError = "插件\(userOperation)已完成，但 Harness 重启失败：\(restartError)"
                     presentInfoAlert(
-                        title: "插件(userOperation)完成，但 Harness 未启动",
+                        title: "插件\(userOperation)完成，但 Harness 未启动",
                         message: lastError ?? restartError
                     )
                     return
@@ -405,15 +415,121 @@ final class LauncherModel: ObservableObject {
             presentInfoAlert(title: "插件\(userOperation)完成", message: "DeepSeek Harness 的 web profile 已更新。")
         } catch {
             let message = error.localizedDescription
-            lastError = message
-            phase = .failed(message)
-            if wasRunning { await start() }
-            // start() intentionally clears transient state on a successful
-            // restart; restore the mutation error so it remains visible.
-            lastError = message
-            AppLogger.plugins.error("Plugin \(userOperation, privacy: .public) failed: \(message, privacy: .public)")
-            presentInfoAlert(title: "插件\(userOperation)失败", message: message)
+            if attemptBuildScriptApproval,
+               case let PluginCommandError.buildScriptsRequireApproval(packages, output) = error {
+                guard confirmBuildScriptApproval(packages: packages) else {
+                    await finishPluginFailure(
+                        output,
+                        userOperation: userOperation,
+                        restartAfterMutation: wasRunning
+                    )
+                    return
+                }
+                phase = .busy("Preparing pnpm build permissions")
+                do {
+                    let retryPlan = try pluginRunner.dependencyPlan(
+                        installation: installation,
+                        paths: paths,
+                        arguments: arguments,
+                        additionalRequirements: additionalToolRequirements
+                    )
+                    await mutatePlugin(
+                        arguments: arguments,
+                        operation: operation,
+                        userOperation: userOperation,
+                        dependencyPlan: retryPlan,
+                        additionalToolRequirements: additionalToolRequirements,
+                        allowedBuildScripts: packages,
+                        restartAfterMutation: wasRunning,
+                        attemptDependencyRecovery: true,
+                        attemptBuildScriptApproval: false
+                    )
+                    return
+                } catch {
+                    await finishPluginFailure(
+                        error.localizedDescription,
+                        userOperation: userOperation,
+                        restartAfterMutation: wasRunning
+                    )
+                    return
+                }
+            }
+            if attemptDependencyRecovery,
+               let requirement = PluginDependencyService.installableRequirement(from: message),
+               let manifest = ToolchainCatalog.bundled.manifest(for: requirement) {
+                let installPlan = ToolchainInstallPlan(
+                    manifest: manifest,
+                    destination: paths.toolchain
+                        .appendingPathComponent(manifest.id, isDirectory: true)
+                        .appendingPathComponent(manifest.version, isDirectory: true)
+                )
+                guard confirmToolchainInstallation(installPlan) else {
+                    await finishPluginFailure(
+                        message,
+                        userOperation: userOperation,
+                        restartAfterMutation: wasRunning
+                    )
+                    return
+                }
+                phase = .busy("Preparing \(manifest.id)")
+                do {
+                    _ = try await toolchainInstaller.install(
+                        requirement: requirement,
+                        paths: paths,
+                        progress: { completed, total in
+                            AppLogger.plugins.info("Private dependency download \(completed)/\(total)")
+                        }
+                    )
+                    let retryPlan = try pluginRunner.dependencyPlan(
+                        installation: installation,
+                        paths: paths,
+                        arguments: arguments,
+                        additionalRequirements: additionalToolRequirements + [requirement]
+                    )
+                    await mutatePlugin(
+                        arguments: arguments,
+                        operation: operation,
+                        userOperation: userOperation,
+                        dependencyPlan: retryPlan,
+                        additionalToolRequirements: additionalToolRequirements + [requirement],
+                        restartAfterMutation: wasRunning,
+                        attemptDependencyRecovery: false
+                    )
+                    return
+                } catch {
+                    await finishPluginFailure(
+                        error.localizedDescription,
+                        userOperation: userOperation,
+                        restartAfterMutation: wasRunning
+                    )
+                    return
+                }
+            }
+            await finishPluginFailure(
+                message,
+                userOperation: userOperation,
+                restartAfterMutation: wasRunning
+            )
         }
+    }
+
+    private func finishPluginFailure(
+        _ message: String,
+        userOperation: String,
+        restartAfterMutation: Bool
+    ) async {
+        lastError = message
+        phase = .failed(message)
+        if restartAfterMutation {
+            await start()
+        }
+        // start() clears transient state on a successful restart; retain the
+        // mutation error so it remains visible in the launcher.
+        lastError = message
+        AppLogger.plugins.error(
+            "Plugin \(userOperation, privacy: .public) failed: \(message, privacy: .public)"
+        )
+        presentInfoAlert(title: "插件\(userOperation)失败", message: message)
     }
 
     private func handleUnexpectedTermination(_ output: String) {
@@ -760,6 +876,37 @@ final class LauncherModel: ObservableObject {
         alert.informativeText = "目标：\(spec)\n\nLauncher 会把当前 web profile 复制到 staging，执行官方 dsh plugin 命令或 profile patch，并执行候选启动预检。插件可能包含本地代码和 lifecycle/build script；请确认来源可信。\(dependencyText)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmToolchainInstallation(_ plan: ToolchainInstallPlan) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "插件需要额外依赖"
+        alert.informativeText = """
+        插件安装报告缺少一个受控的基础工具。Launcher 只会安装下面列出的固定版本，不会执行插件提供的任意命令。
+
+        \(plan.confirmationText)
+
+        下载完成后会进行 HTTPS、大小、SHA-256 和可执行文件校验；依赖只对本 App 的 Harness 子进程生效。
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "安装依赖并继续")
+        alert.addButton(withTitle: "取消")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    private func confirmBuildScriptApproval(packages: [String]) -> Bool {
+        let alert = NSAlert()
+        alert.messageText = "插件需要执行安装构建脚本"
+        alert.informativeText = """
+        pnpm 为安全起见阻止了以下插件的 prepare/build 脚本：
+        \(packages.map { "• \($0)" }.joined(separator: "\n"))
+
+        继续后，Launcher 只会把这些精确的包名写入 staging profile 的 pnpm-workspace.yaml allowBuilds 配置，然后重新执行官方安装命令。不会执行 README 中的任意命令，也不会修改用户全局 pnpm 配置。
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "允许并重试")
         alert.addButton(withTitle: "取消")
         return alert.runModal() == .alertFirstButtonReturn
     }

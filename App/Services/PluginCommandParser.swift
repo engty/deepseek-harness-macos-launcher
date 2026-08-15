@@ -85,7 +85,31 @@ struct PluginCommandParser {
         for value in values where value.hasPrefix("-") {
             throw PluginCommandParserError.optionNotAllowed(value)
         }
-        return ["add"] + values
+        // pnpm resolves the shorthand `github:owner/repo` through Git SSH.
+        // Finder-launched apps do not inherit a user's interactive SSH agent,
+        // while public GitHub repositories are safely cloneable over HTTPS.
+        // Normalize only the strict public shorthand shape; explicit git/SSH
+        // specs and malformed values retain their original semantics.
+        return ["add"] + values.map(normalizeGitHubShorthand)
+    }
+
+    private static func normalizeGitHubShorthand(_ value: String) -> String {
+        let pattern = #"^github:([A-Za-z0-9][A-Za-z0-9._-]*)/([A-Za-z0-9][A-Za-z0-9._-]*)(#[^\s]+)?$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(
+                  in: value,
+                  range: NSRange(value.startIndex..<value.endIndex, in: value)
+              ),
+              let ownerRange = Range(match.range(at: 1), in: value),
+              let repositoryRange = Range(match.range(at: 2), in: value) else {
+            return value
+        }
+        let owner = String(value[ownerRange])
+        let repository = String(value[repositoryRange])
+        let suffix = match.range(at: 3).location == NSNotFound
+            ? ""
+            : String(value[Range(match.range(at: 3), in: value)!])
+        return "https://github.com/\(owner)/\(repository).git\(suffix)"
     }
 
     private static func tokenize(_ input: String) throws -> [String] {

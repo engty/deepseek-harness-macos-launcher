@@ -34,6 +34,12 @@ The launcher never runs `git pull` or builds the Harness source tree on a user
 machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
+Dependencies that are not shipped in the Runtime are never installed globally.
+The controlled recovery list is stored under the App's private Application
+Support toolchain directory, with one immutable version directory and a
+manifest per tool. Unknown commands or dependencies are reported to the user
+instead of being executed.
+
 Release checks use the repository-level `compatibility-matrix.json` and
 `script/validate_release.sh`. Developer ID and notarization are intentionally
 outside this product's scope.
