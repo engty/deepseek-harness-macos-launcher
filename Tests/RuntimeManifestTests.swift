@@ -140,6 +140,23 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func classifiesChineseYuanBalanceForToolbar() {
+        func info(_ amount: String) -> DeepSeekBalanceInfo {
+            DeepSeekBalanceInfo(
+                currency: "CNY",
+                totalBalance: amount,
+                grantedBalance: "0",
+                toppedUpBalance: amount
+            )
+        }
+
+        #expect(DeepSeekBalanceTone(balanceInfos: [info("100")]) == .healthy)
+        #expect(DeepSeekBalanceTone(balanceInfos: [info("50")]) == .warning)
+        #expect(DeepSeekBalanceTone(balanceInfos: [info("49.99")]) == .critical)
+        #expect(DeepSeekBalanceTone(balanceInfos: [info("invalid")]) == .unknown)
+    }
+
+    @Test
     @MainActor
     func activatesAndRollsBackTarRuntime() async throws {
         let fileManager = FileManager.default

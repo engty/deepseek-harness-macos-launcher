@@ -44,7 +44,7 @@ struct LauncherCommands: Commands {
 
     var body: some Commands {
         CommandMenu("DeepSeek") {
-            Button("Configure API Key…") {
+            Button("Change DeepSeek API Key…") {
                 model.configureDeepSeekBalance(forcePrompt: true)
             }
         }

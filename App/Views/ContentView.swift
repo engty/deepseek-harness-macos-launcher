@@ -31,12 +31,25 @@ struct ContentView: View {
                         .frame(height: 15)
 
                     if model.isBalanceConfigured {
-                        HStack(spacing: 5) {
-                            Image(systemName: "creditcard")
-                            Text(model.balanceDisplayText)
+                        Button {
+                            model.configureDeepSeekBalance(forcePrompt: true)
+                        } label: {
+                            HStack(spacing: 5) {
+                                Image(systemName: "creditcard")
+                                    .foregroundStyle(.secondary)
+                                if let amount = model.balanceAmountDisplayText {
+                                    Text("余额")
+                                    Text(amount)
+                                        .foregroundStyle(balanceColor)
+                                } else {
+                                    Text(model.balanceDisplayText)
+                                }
+                            }
                         }
+                        .buttonStyle(.plain)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .help("点击更换 DeepSeek API Key")
                     } else {
                         Button {
                             model.configureDeepSeekBalance()
@@ -72,6 +85,19 @@ struct ContentView: View {
         }
         .task {
             await model.startIfNeeded()
+        }
+    }
+
+    private var balanceColor: Color {
+        switch model.balanceTone {
+        case .healthy:
+            return .green
+        case .warning:
+            return .yellow
+        case .critical:
+            return .red
+        case .unknown:
+            return .secondary
         }
     }
 }

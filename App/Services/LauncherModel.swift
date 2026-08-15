@@ -24,9 +24,10 @@ final class LauncherModel: ObservableObject {
     private let dataSlotManager: DataSlotManager
     private let runtimePreflight: RuntimePreflightService
     private let balanceService: DeepSeekBalanceService
+    private let deepSeekCredentialStore = DeepSeekCredentialStore()
     private let balanceKeychain = KeychainStore(
         service: AppPaths.bundleIdentifier,
-        account: "deepseek-api-key"
+        account: DeepSeekCredentialStore.reference
     )
     private var latestManifest: RuntimeManifest?
     private var balanceRefreshTask: Task<Void, Never>?
@@ -53,10 +54,18 @@ final class LauncherModel: ObservableObject {
         do {
             try paths.prepare()
             plugins = profileManager.refresh()
-            // Do not probe a previously stored Keychain item during launch:
-            // ad-hoc development identities can trigger a macOS access sheet.
-            // Balance configuration is an explicit user action for this App.
-            isBalanceConfigured = false
+            // Restore the binding state from Keychain. The item is created
+            // without an access-control prompt, so a non-interactive read is
+            // safe at launch and keeps the user's API key bound across relaunches.
+            do {
+                isBalanceConfigured = try synchronizeDeepSeekCredential() != nil
+            } catch {
+                // Keep launch available if a malformed credential document is
+                // present; the next explicit key replacement repairs it.
+                isBalanceConfigured = balanceKeychain.read(allowInteraction: false)
+                    .map { !$0.isEmpty } ?? false
+                lastError = error.localizedDescription
+            }
         } catch {
             lastError = error.localizedDescription
             phase = .failed(error.localizedDescription)
@@ -221,12 +230,13 @@ final class LauncherModel: ObservableObject {
         }
 
         guard let apiKey = promptForSecret(
-            title: "配置 DeepSeek API Key",
-            message: "API Key 仅保存到 macOS Keychain，并仅用于调用 DeepSeek 官方余额接口。不会注入 Harness Web UI、日志或诊断文件。"
+            title: isBalanceConfigured ? "更换 DeepSeek API Key" : "配置 DeepSeek API Key",
+            message: "同一个 API Key 会同时绑定 DeepSeek 模型和余额查询：一份保存到 macOS Keychain，另一份同步到 Harness 标准凭据文件。不会写入日志或诊断文件。"
         ) else { return }
 
         do {
             try balanceKeychain.save(apiKey)
+            try deepSeekCredentialStore.write(apiKey, to: paths.dshHome)
             isBalanceConfigured = true
             scheduleBalanceRefresh()
         } catch {
@@ -236,7 +246,17 @@ final class LauncherModel: ObservableObject {
     }
 
     func refreshBalance() async {
-        guard let apiKey = balanceKeychain.read(allowInteraction: true), !apiKey.isEmpty else {
+        let apiKey: String?
+        do {
+            apiKey = try synchronizeDeepSeekCredential()
+        } catch {
+            balanceState = .failed(error.localizedDescription)
+            return
+        }
+
+        guard let apiKey, !apiKey.isEmpty else {
+            // Do not forget a valid binding just because a transient Keychain
+            // read failed. Only an explicit replacement changes the binding.
             isBalanceConfigured = false
             balanceState = .notConfigured
             return
@@ -263,6 +283,17 @@ final class LauncherModel: ObservableObject {
         case .failed:
             return "余额查询失败"
         }
+    }
+
+    var balanceAmountDisplayText: String? {
+        guard case .available(let infos) = balanceState else { return nil }
+        let amounts = infos.map { balanceAmount(for: $0) }
+        return amounts.isEmpty ? nil : amounts.joined(separator: " / ")
+    }
+
+    var balanceTone: DeepSeekBalanceTone {
+        guard case .available(let infos) = balanceState else { return .unknown }
+        return DeepSeekBalanceTone(balanceInfos: infos)
     }
 
     var hasAvailableRuntimeUpdate: Bool {
@@ -386,6 +417,31 @@ final class LauncherModel: ObservableObject {
                 }
             }
         }
+    }
+
+    /// Keep the native balance lookup and Harness's Web Models page on one
+    /// credential. The standard Harness file wins when it already contains a
+    /// key (for example, the user entered it in Settings → Models); otherwise
+    /// the Keychain value is copied into the standard file for the model.
+    private func synchronizeDeepSeekCredential() throws -> String? {
+        let fileValue = try deepSeekCredentialStore.read(from: paths.dshHome)
+        let keychainValue = balanceKeychain.read(allowInteraction: false)
+
+        if let fileValue, !fileValue.isEmpty {
+            if keychainValue != fileValue {
+                try balanceKeychain.save(fileValue)
+            }
+            isBalanceConfigured = true
+            return fileValue
+        }
+
+        guard let keychainValue, !keychainValue.isEmpty else {
+            isBalanceConfigured = false
+            return nil
+        }
+        try deepSeekCredentialStore.write(keychainValue, to: paths.dshHome)
+        isBalanceConfigured = true
+        return keychainValue
     }
 
     private func checkForUpdates(presentResult: Bool) async {

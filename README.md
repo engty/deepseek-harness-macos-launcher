@@ -84,7 +84,7 @@ sidecar PID 仅写入 App 私有 state；若 App 被强制终止，下一次启�
 
 Plugins 菜单使用官方 `dsh plugin --profile web ...` 语义。安装时可以直接粘贴 `dsh plugin --profile web add <plugin-spec>` 命令，Launcher 只解析参数，不经过 shell。卸载和停用会列出实际插件并支持多选/全选；卸载调用官方 `remove`，停用通过官方支持的 `--patch` overlay 将 bundle row 标记为 `disabled: true`，不删除插件源码。产品承诺范围是插件安装、卸载和停止；插件本身的 Provider 兼容性由 Harness/插件上游负责。
 
-顶栏绿色/红色圆点分别表示 Harness 已运行/未运行，旁边显示当前 `@deepseek-ai/dsh` 版本。检测到受控 HTTPS Runtime manifest 更新后会显示圆形下载按钮；artifact 通过 SHA-256、大小、架构、归档安全和候选启动检查。余额按钮首次使用时将 DeepSeek API Key 保存到 macOS Keychain，并调用官方余额接口；配置后立即查询，之后每 60 秒自动刷新。为避免 ad-hoc App 在启动阶段触发 Keychain 授权弹窗，Launcher 不在启动时主动读取旧 Keychain 条目，余额配置通过用户主动操作建立当前会话。
+顶栏绿色/红色圆点分别表示 Harness 已运行/未运行，旁边显示当前 `@deepseek-ai/dsh` 版本。检测到受控 HTTPS Runtime manifest 更新后会显示圆形下载按钮；artifact 通过 SHA-256、大小、架构、归档安全和候选启动检查。余额按钮首次使用时将 DeepSeek API Key 保存到 macOS Keychain，并调用官方余额接口；应用重新启动后会自动恢复这个绑定，之后每 60 秒自动刷新。只有用户主动点击余额区域或菜单中的“Change DeepSeek API Key…”才会替换已保存的 Key。Key 不会写入仓库、WebView、日志或诊断包。
 
 Runtime artifact 现已支持 HTTPS feed、SHA-256、`minShellVersion`、tar archive 安全检查、base `--version`/`--dump-config` 预检、实际用户 data slot 候选启动、候选 Runtime 激活和失败回滚。Runtime feed 不使用公钥签名，适合受控分发，不提供供应链签名安全保证。插件安装/删除也会在完整 data slot 副本中执行官方命令，成功后原子切换，失败时保留旧 slot。
 
@@ -103,7 +103,7 @@ Runtime 更新只信任配置的 HTTPS feed；发布方需要自行维护 feed�
 
 1. [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) — 官方 `dsh` Runtime 与 Web UI。本项目按上游 MIT License 使用其公开的 `dsh --profile web` 运行方式；具体 Runtime 版本由 GitHub Actions 中的 `HARNESS_VERSION` 固定。上游项目仍是 Harness 源码、第三方依赖清单和协议的权威来源。
 2. [dsh-llm-codex](https://github.com/yequ172672/dsh-codex-subscription) — 可选的标准 Harness 插件，通过 `dsh plugin --profile web add dsh-llm-codex` 安装。本仓库不复制、不默认捆绑该插件源码，也不维护其 ChatGPT/Codex Provider 协议；许可证、订阅条款、凭证读取和模型可用性以插件上游为准。
-3. [DeepSeek Balance API](https://api-docs.deepseek.com/api/get-user-balance) — 顶栏余额查询仅使用用户主动配置的 API Key，并保存到 macOS Keychain，不写入仓库、WebView、日志或诊断包。
+3. [DeepSeek Balance API](https://api-docs.deepseek.com/api/get-user-balance) — 顶栏余额查询与 Harness Web Models 页面共用同一个 DeepSeek API Key：App 将其保存到 macOS Keychain，并同步到 Harness 标准 `$DSH_HOME/.credentials.yaml`，不写入仓库、WebView、日志或诊断包。
 4. [Swift](https://www.swift.org/)、[SwiftUI/AppKit](https://developer.apple.com/documentation/) 和 [WKWebView](https://developer.apple.com/documentation/webkit/wkwebview) — macOS 原生窗口、菜单和 Web UI 容器。
 
 第三方声明和发布边界见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)；本项目自身代码使用 [`LICENSE`](LICENSE) 中的 MIT License。任何 Runtime Release 都应同时遵循上游 Runtime、Node.js 和 npm 依赖的许可证要求。

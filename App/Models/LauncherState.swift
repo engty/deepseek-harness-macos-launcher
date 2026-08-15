@@ -92,6 +92,29 @@ struct DeepSeekBalanceResponse: Codable, Equatable {
     }
 }
 
+enum DeepSeekBalanceTone: Equatable {
+    case unknown
+    case healthy
+    case warning
+    case critical
+
+    init(balanceInfos: [DeepSeekBalanceInfo]) {
+        guard let cny = balanceInfos.first(where: { $0.currency.uppercased() == "CNY" }),
+              let amount = Decimal(string: cny.totalBalance, locale: Locale(identifier: "en_US_POSIX")) else {
+            self = .unknown
+            return
+        }
+
+        if amount >= Decimal(100) {
+            self = .healthy
+        } else if amount >= Decimal(50) {
+            self = .warning
+        } else {
+            self = .critical
+        }
+    }
+}
+
 enum DeepSeekBalanceState: Equatable {
     case notConfigured
     case loading
