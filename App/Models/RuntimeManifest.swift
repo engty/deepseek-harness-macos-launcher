@@ -72,7 +72,7 @@ enum RuntimeManifestError: LocalizedError, Equatable {
     var errorDescription: String? {
         switch self {
         case .feedNotConfigured:
-            return "尚未配置 HTTPS Runtime update feed。"
+            return "当前 App 未配置 Harness Runtime 更新源；这只影响底层 Runtime 更新，不影响 App 使用。"
         case .invalidURL:
             return "更新 feed 或 artifact URL 必须是 HTTPS。"
         case .invalidJSON:

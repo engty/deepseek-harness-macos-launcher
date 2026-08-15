@@ -48,3 +48,17 @@ The packaged `bin/deepseek-harness-plugin` helper forwards standard
 `plugin --profile web ...` commands for advanced automation. The App UI uses a
 transactional staging slot; direct helper use is intentionally an advanced
 operation and follows the official Harness CLI semantics.
+
+## Credential storage
+
+The launcher stores the user's DeepSeek API key locally in macOS Keychain and
+also in Harness's required `$DSH_HOME/.credentials.yaml` file (mode `0600`).
+The two local copies let the native balance query and the official Harness
+Models provider use the same credential. The project has no credential server,
+telemetry, or remote synchronization service. Keys are not committed to the
+repository and are redacted from operation logs and diagnostic exports.
+
+The macOS App update menu checks the outer launcher release on GitHub. The
+version-adjacent download button is a separate channel for the embedded
+DeepSeek Harness Runtime and requires the controlled HTTPS Runtime manifest
+described in `prd.md`.

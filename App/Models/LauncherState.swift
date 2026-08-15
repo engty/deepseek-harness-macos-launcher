@@ -48,6 +48,14 @@ enum RuntimeUpdateState: Equatable {
     case failed(String)
 }
 
+enum AppUpdateState: Equatable {
+    case idle
+    case checking
+    case available(version: String, url: URL)
+    case upToDate
+    case failed(String)
+}
+
 struct DeepSeekBalanceInfo: Codable, Equatable {
     let currency: String
     let totalBalance: String

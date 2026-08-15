@@ -11,6 +11,7 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var runtimeVersion: String?
     @Published private(set) var lastError: String?
     @Published private(set) var updateState: RuntimeUpdateState = .idle
+    @Published private(set) var appUpdateState: AppUpdateState = .idle
     @Published private(set) var balanceState: DeepSeekBalanceState = .notConfigured
     @Published private(set) var isBalanceConfigured = false
 
@@ -20,6 +21,7 @@ final class LauncherModel: ObservableObject {
     private let processController: HarnessProcessController
     private let pluginRunner: PluginCommandRunner
     private let updateService: RuntimeUpdateService
+    private let appUpdateService: AppUpdateService
     private let runtimeInstaller: RuntimeArchiveInstaller
     private let toolchainInstaller: ToolchainInstaller
     private let dataSlotManager: DataSlotManager
@@ -27,7 +29,7 @@ final class LauncherModel: ObservableObject {
     private let balanceService: DeepSeekBalanceService
     private let deepSeekCredentialStore = DeepSeekCredentialStore()
     private let balanceKeychain = KeychainStore(
-        service: AppPaths.bundleIdentifier,
+        service: AppPaths.bundleIdentifier + ".credentials.v2",
         account: DeepSeekCredentialStore.reference
     )
     private var latestManifest: RuntimeManifest?
@@ -45,6 +47,7 @@ final class LauncherModel: ObservableObject {
         processController = HarnessProcessController()
         pluginRunner = PluginCommandRunner()
         updateService = RuntimeUpdateService()
+        appUpdateService = AppUpdateService()
         runtimeInstaller = RuntimeArchiveInstaller()
         toolchainInstaller = ToolchainInstaller()
         dataSlotManager = DataSlotManager()
@@ -77,6 +80,10 @@ final class LauncherModel: ObservableObject {
     var endpointURL: URL? {
         if case .ready(let url) = phase { return url }
         return nil
+    }
+
+    var currentAppVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.0.0"
     }
 
     var isHarnessRunning: Bool { processController.isRunning }
@@ -161,7 +168,7 @@ final class LauncherModel: ObservableObject {
             pluginOperationStates[$0.id] = enabled ? .starting : .stopping
         }
         let names = selectedPlugins.map(\.name).joined(separator: ", ")
-        phase = .busy(enabled ? "Starting \(names)" : "Stopping \(names)")
+        phase = .busy(enabled ? "正在启用 \(names)" : "正在停用 \(names)")
         if wasRunning { await processController.stop() }
 
         do {
@@ -187,7 +194,7 @@ final class LauncherModel: ObservableObject {
 
     func installPluginPrompt() {
         guard let command = promptForText(
-            title: "Install Harness Plugin",
+            title: "安装 Harness 插件",
             message: "粘贴官方安装命令。只接受 dsh plugin --profile web add <plugin-spec>，不会通过 shell 执行。",
             placeholder: "例如 dsh plugin --profile web add dsh-llm-codex"
         ) else { return }
@@ -208,7 +215,7 @@ final class LauncherModel: ObservableObject {
             Task {
                 await mutatePlugin(
                     arguments: arguments,
-                    operation: "Installing Plugin",
+                    operation: "正在安装插件",
                     userOperation: "安装",
                     dependencyPlan: dependencyPlan
                 )
@@ -238,7 +245,7 @@ final class LauncherModel: ObservableObject {
             Task {
                 await mutatePlugin(
                     arguments: arguments,
-                    operation: "Removing Plugins",
+                    operation: "正在卸载插件",
                     userOperation: "卸载",
                     dependencyPlan: dependencyPlan
                 )
@@ -258,6 +265,10 @@ final class LauncherModel: ObservableObject {
 
     func checkForUpdates() {
         Task { await checkForUpdates(presentResult: true) }
+    }
+
+    func checkForAppUpdates() {
+        Task { await checkForAppUpdates(presentResult: true) }
     }
 
     func downloadLatestUpdate() {
@@ -412,7 +423,7 @@ final class LauncherModel: ObservableObject {
             }
             lastError = nil
             AppLogger.plugins.info("Plugin \(userOperation, privacy: .public) succeeded")
-            presentInfoAlert(title: "插件\(userOperation)完成", message: "DeepSeek Harness 的 web profile 已更新。")
+            presentInfoAlert(title: "插件\(userOperation)完成", message: "DeepSeek Harness 的 web profile 配置已更新。")
         } catch {
             let message = error.localizedDescription
             if attemptBuildScriptApproval,
@@ -425,7 +436,7 @@ final class LauncherModel: ObservableObject {
                     )
                     return
                 }
-                phase = .busy("Preparing pnpm build permissions")
+                phase = .busy("正在准备 pnpm 构建权限")
                 do {
                     let retryPlan = try pluginRunner.dependencyPlan(
                         installation: installation,
@@ -471,7 +482,7 @@ final class LauncherModel: ObservableObject {
                     )
                     return
                 }
-                phase = .busy("Preparing \(manifest.id)")
+                phase = .busy("正在准备 \(manifest.id)")
                 do {
                     _ = try await toolchainInstaller.install(
                         requirement: requirement,
@@ -606,20 +617,24 @@ final class LauncherModel: ObservableObject {
     }
 
     /// Keep the native balance lookup and Harness's Web Models page on one
-    /// credential. The standard Harness file wins when it already contains a
-    /// key (for example, the user entered it in Settings → Models); otherwise
-    /// the Keychain value is copied into the standard file for the model.
+    /// credential. The standard Harness file is the source of truth when it
+    /// already contains a key (for example, the user entered it in Settings →
+    /// Models). Startup never writes back to Keychain, because updating an old
+    /// legacy item can trigger an authorization sheet after an App replacement.
+    /// The Keychain value is used only as a fallback when the file is missing.
     private func synchronizeDeepSeekCredential() throws -> String? {
         let fileValue = try deepSeekCredentialStore.read(from: paths.dshHome)
-        let keychainValue = balanceKeychain.read(allowInteraction: false)
-
         if let fileValue, !fileValue.isEmpty {
-            if keychainValue != fileValue {
-                try balanceKeychain.save(fileValue)
-            }
             isBalanceConfigured = true
             return fileValue
         }
+
+        // Only the current credential item is used as a fallback when the
+        // private Harness credential file is missing. The old service is
+        // deliberately never queried during startup: even a non-interactive
+        // read can surface an authorization sheet for an item owned by a
+        // previous ad-hoc App signature.
+        let keychainValue = balanceKeychain.read(allowInteraction: false)
 
         guard let keychainValue, !keychainValue.isEmpty else {
             isBalanceConfigured = false
@@ -646,7 +661,43 @@ final class LauncherModel: ObservableObject {
         } catch {
             latestManifest = nil
             updateState = .failed(error.localizedDescription)
-            if presentResult { presentInfoAlert(title: "无法检查 Harness 更新", message: error.localizedDescription) }
+            if presentResult {
+                let title: String
+                if let runtimeError = error as? RuntimeManifestError,
+                   runtimeError == .feedNotConfigured {
+                    title = "Harness Runtime 更新源未配置"
+                } else {
+                    title = "无法检查 Harness Runtime 更新"
+                }
+                presentInfoAlert(title: title, message: error.localizedDescription)
+            }
+        }
+    }
+
+    private func checkForAppUpdates(presentResult: Bool) async {
+        appUpdateState = .checking
+        do {
+            let result = try await appUpdateService.check(currentVersion: currentAppVersion)
+            if result.isUpdateAvailable {
+                appUpdateState = .available(version: result.latestVersion, url: result.releaseURL)
+                if presentResult { presentAppUpdateAlert(result) }
+            } else {
+                appUpdateState = .upToDate
+                if presentResult {
+                    presentInfoAlert(
+                        title: "DeepSeek Harness App 已是最新",
+                        message: "当前版本：\(result.currentVersion)"
+                    )
+                }
+            }
+        } catch {
+            appUpdateState = .failed(error.localizedDescription)
+            if presentResult {
+                presentInfoAlert(
+                    title: "无法检查 DeepSeek Harness App 更新",
+                    message: error.localizedDescription
+                )
+            }
         }
     }
 
@@ -792,6 +843,18 @@ final class LauncherModel: ObservableObject {
         alert.runModal()
     }
 
+    private func presentAppUpdateAlert(_ result: AppUpdateResult) {
+        let alert = NSAlert()
+        alert.messageText = "发现 DeepSeek Harness App 更新"
+        alert.informativeText = "当前版本：\(result.currentVersion)\n最新版本：\(result.latestVersion)\n\n此更新会替换外层 macOS App；底层 Harness Runtime 由版本号旁的下载按钮单独管理。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "打开下载页")
+        alert.addButton(withTitle: "稍后")
+        if alert.runModal() == .alertFirstButtonReturn {
+            NSWorkspace.shared.open(result.releaseURL)
+        }
+    }
+
     private func presentInfoAlert(title: String, message: String) {
         let alert = NSAlert()
         alert.messageText = title
@@ -815,8 +878,8 @@ final class LauncherModel: ObservableObject {
         field.placeholderString = placeholder
         field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
         alert.accessoryView = field
-        alert.addButton(withTitle: "Continue")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: "继续")
+        alert.addButton(withTitle: "取消")
         guard alert.runModal() == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return allowsEmpty || !value.isEmpty ? value : nil
@@ -827,7 +890,7 @@ final class LauncherModel: ObservableObject {
         operation: String
     ) -> [HarnessPlugin] {
         guard !plugins.isEmpty else {
-            presentInfoAlert(title: "没有已安装插件", message: "请先通过 Plugins > Install Plugin… 安装标准 Harness 插件。")
+            presentInfoAlert(title: "没有已安装插件", message: "请先通过“插件 > 安装插件…”安装标准 Harness 插件。")
             return []
         }
 
@@ -873,7 +936,7 @@ final class LauncherModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "确认\(operation) Harness 插件？"
         let dependencyText = dependencyPlan.map { "\n\n\($0.confirmationText)" } ?? ""
-        alert.informativeText = "目标：\(spec)\n\nLauncher 会把当前 web profile 复制到 staging，执行官方 dsh plugin 命令或 profile patch，并执行候选启动预检。插件可能包含本地代码和 lifecycle/build script；请确认来源可信。\(dependencyText)"
+        alert.informativeText = "目标：\(spec)\n\n应用会把当前 web profile 复制到临时目录，执行官方 dsh plugin 命令或配置补丁，并执行候选启动预检。插件可能包含本地代码和生命周期/构建脚本；请确认来源可信。\(dependencyText)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "继续")
         alert.addButton(withTitle: "取消")
@@ -900,10 +963,10 @@ final class LauncherModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "插件需要执行安装构建脚本"
         alert.informativeText = """
-        pnpm 为安全起见阻止了以下插件的 prepare/build 脚本：
+        pnpm 为安全起见阻止了以下插件的 prepare/build 构建脚本：
         \(packages.map { "• \($0)" }.joined(separator: "\n"))
 
-        继续后，Launcher 只会把这些精确的包名写入 staging profile 的 pnpm-workspace.yaml allowBuilds 配置，然后重新执行官方安装命令。不会执行 README 中的任意命令，也不会修改用户全局 pnpm 配置。
+        继续后，应用只会把这些精确的包名写入临时 profile 的 pnpm-workspace.yaml allowBuilds 配置，然后重新执行官方安装命令。不会执行 README 中的任意命令，也不会修改用户全局 pnpm 配置。
         """
         alert.alertStyle = .warning
         alert.addButton(withTitle: "允许并重试")

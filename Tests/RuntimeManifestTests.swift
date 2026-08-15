@@ -123,6 +123,33 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    @MainActor
+    func appUpdateServiceChecksGitHubRelease() async throws {
+        let feedURL = URL(string: "https://updates.example.com/app/latest")!
+        let payload = Data(#"""
+        {
+            "tag_name":"v0.1.11",
+            "name":"DeepSeek Harness v0.1.11",
+            "html_url":"https://github.com/engty/deepseek-harness-macos-launcher/releases/tag/v0.1.11",
+            "published_at":"2026-08-15T00:00:00Z"
+        }
+        """#.utf8)
+        URLProtocolStub.appResponses = [feedURL: (200, payload)]
+        defer { URLProtocolStub.appResponses = [:] }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let service = AppUpdateService(
+            environment: ["HARNESS_APP_UPDATE_URL": feedURL.absoluteString],
+            session: URLSession(configuration: configuration)
+        )
+
+        let result = try await service.check(currentVersion: "0.1.10-local")
+        #expect(result.latestVersion == "0.1.11")
+        #expect(result.isUpdateAvailable)
+    }
+
+    @Test
     func launcherPhaseReportsReadiness() {
         #expect(LauncherPhase.ready(URL(string: "http://127.0.0.1:1234")!).isReady)
         #expect(!LauncherPhase.stopped.isReady)
@@ -475,6 +502,7 @@ exit 1
 
 private final class URLProtocolStub: URLProtocol {
     nonisolated(unsafe) static var responses: [URL: (status: Int, data: Data)] = [:]
+    nonisolated(unsafe) static var appResponses: [URL: (status: Int, data: Data)] = [:]
 
     override class func canInit(with request: URLRequest) -> Bool {
         request.url?.scheme == "https"
@@ -485,7 +513,8 @@ private final class URLProtocolStub: URLProtocol {
     }
 
     override func startLoading() {
-        guard let url = request.url, let response = Self.responses[url] else {
+        guard let url = request.url,
+              let response = Self.responses[url] ?? Self.appResponses[url] else {
             client?.urlProtocol(self, didFailWithError: URLError(.fileDoesNotExist))
             return
         }

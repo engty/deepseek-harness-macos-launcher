@@ -23,14 +23,37 @@ struct HarnessWebView: NSViewRepresentable {
     }
 
     func updateNSView(_ webView: WKWebView, context: Context) {
+        context.coordinator.allowedOrigin = url
         context.coordinator.onLoadError = onLoadError
-        guard webView.url?.absoluteString != url.absoluteString else { return }
+        // SwiftUI calls updateNSView whenever any observed launcher state
+        // changes, including the once-per-minute balance value. The WebView
+        // may currently be on Harness's Settings/Models route, so comparing
+        // the full URL here would incorrectly reload the home page. Reload
+        // only when the Harness origin itself changes (for example after a
+        // process restart on a new port).
+        guard let currentURL = webView.url,
+              !Self.sharesOrigin(currentURL, url) else { return }
         webView.load(URLRequest(url: url))
+    }
+
+    static func sharesOrigin(_ lhs: URL, _ rhs: URL) -> Bool {
+        lhs.scheme?.lowercased() == rhs.scheme?.lowercased()
+            && lhs.host?.lowercased() == rhs.host?.lowercased()
+            && effectivePort(for: lhs) == effectivePort(for: rhs)
+    }
+
+    private static func effectivePort(for url: URL) -> Int? {
+        if let port = url.port { return port }
+        switch url.scheme?.lowercased() {
+        case "http": return 80
+        case "https": return 443
+        default: return nil
+        }
     }
 
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
-        let allowedOrigin: URL
+        var allowedOrigin: URL
         var onLoadError: (String) -> Void
 
         init(allowedOrigin: URL, onLoadError: @escaping (String) -> Void) {

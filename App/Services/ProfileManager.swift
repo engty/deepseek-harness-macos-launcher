@@ -9,11 +9,11 @@ enum ProfileManagerError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .profileUnavailable:
-            return "Harness web profile 尚未初始化。"
+            return "Harness 的 web profile 尚未初始化。"
         case .pluginHasNoPatchRows(let name):
-            return "插件 \(name) 没有可识别的 bundle patch 行，无法由 Launcher 单独启停。"
+            return "插件 \(name) 没有可识别的 bundle patch 行，无法由应用单独启停。"
         case .invalidManifest:
-            return "Harness profile package.json 无法解析。"
+            return "Harness 的 profile package.json 无法解析。"
         case .mutationFailed(let message):
             return message
         }

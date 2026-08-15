@@ -17,7 +17,7 @@ enum PluginCommandError: LocalizedError {
         case .nonZeroExit(let output):
             return "插件命令执行失败。\n\(output)"
         case .buildScriptsRequireApproval(let packages, let output):
-            return "pnpm 阻止了插件 build script：\(packages.joined(separator: "、"))。\n\(output)"
+            return "pnpm 阻止了插件构建脚本：\(packages.joined(separator: "、"))。\n\(output)"
         }
     }
 }
@@ -129,7 +129,7 @@ final class PluginCommandRunner {
                 to: paths.pluginOperationsLog
             )
             try? FileManager.default.removeItem(at: stagingRoot)
-            throw PluginCommandError.nonZeroExit("插件 profile preflight 失败，active profile 未改变。")
+            throw PluginCommandError.nonZeroExit("插件配置预检失败，当前 profile 未改变。")
         }
 
         let candidateController = HarnessProcessController()
@@ -149,7 +149,7 @@ final class PluginCommandRunner {
             )
             await candidateController.stop()
             try? FileManager.default.removeItem(at: stagingRoot)
-            throw PluginCommandError.nonZeroExit("插件候选启动 preflight 失败，active profile 未改变。")
+            throw PluginCommandError.nonZeroExit("插件候选启动预检失败，当前 profile 未改变。")
         }
 
         guard FileManager.default.fileExists(atPath: stagingProfile.appendingPathComponent("package.json").path) else {
@@ -158,7 +158,7 @@ final class PluginCommandRunner {
                 to: paths.pluginOperationsLog
             )
             try? FileManager.default.removeItem(at: stagingRoot)
-            throw PluginCommandError.nonZeroExit("staging profile 没有生成 package.json")
+            throw PluginCommandError.nonZeroExit("临时 profile 没有生成 package.json")
         }
 
         let metadata = try metadataStore.collect(profileURL: stagingProfile, arguments: arguments)

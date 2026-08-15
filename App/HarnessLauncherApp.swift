@@ -47,6 +47,12 @@ struct LauncherCommands: Commands {
             Button("Change DeepSeek API Key…") {
                 model.configureDeepSeekBalance(forcePrompt: true)
             }
+
+            Divider()
+
+            Button("Check Harness Runtime Updates…") {
+                model.checkForUpdates()
+            }
         }
 
         CommandMenu("Plugins") {
@@ -88,8 +94,8 @@ struct LauncherCommands: Commands {
 
         CommandGroup(after: .appInfo) {
             Divider()
-            Button("Check for Updates…") {
-                model.checkForUpdates()
+            Button("Check DeepSeek Harness App Updates…") {
+                model.checkForAppUpdates()
             }
         }
 

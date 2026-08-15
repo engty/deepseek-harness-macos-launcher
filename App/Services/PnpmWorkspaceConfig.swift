@@ -9,7 +9,7 @@ enum PnpmWorkspaceConfigError: LocalizedError, Equatable {
         case .invalidPackageName(let name):
             return "pnpm build 脚本依赖名称不安全：\(name)"
         case .missingWorkspaceFile(let url):
-            return "找不到 staging profile 的 pnpm-workspace.yaml：\(url.path)"
+            return "找不到临时 profile 的 pnpm-workspace.yaml：\(url.path)"
         }
     }
 }
