@@ -31,9 +31,10 @@ fi
 
 # Single-writer build lock: two concurrent runs used to interleave writes
 # into the same bundle. Never removed automatically.
+mkdir -p "$DIST_DIR"
 BUILD_LOCK="$DIST_DIR/.build-lock"
 if ! mkdir "$BUILD_LOCK" 2>/dev/null; then
-  echo "另一个构建正在运行（或存在陈旧锁目录 $BUILD_LOCK）。确认没有并发构建后可手动删除该目录。" >&2
+  echo "另一个构建正在运行（或存在陈旧锁目录 ${BUILD_LOCK}）。确认没有并发构建后可手动删除该目录。" >&2
   exit 2
 fi
 trap 'rm -rf "$BUILD_BUNDLE" "$ICONSET_DIR"; rmdir "$BUILD_LOCK" 2>/dev/null || true' EXIT

@@ -40,7 +40,7 @@ fi
 # destination and the backup name. The lock is never removed automatically.
 LOCK_DIR="$ROOT_DIR/Resources/.runtime-lock"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
-  echo "另一个 Runtime 打包正在运行（或存在陈旧锁目录 $LOCK_DIR）。确认没有并发运行后可手动删除该目录。" >&2
+  echo "另一个 Runtime 打包正在运行（或存在陈旧锁目录 ${LOCK_DIR}）。确认没有并发运行后可手动删除该目录。" >&2
   exit 2
 fi
 trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
