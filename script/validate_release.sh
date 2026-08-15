@@ -12,6 +12,15 @@ _ = try JSONSerialization.jsonObject(with: data)
 ' "$ROOT_DIR/compatibility-matrix.json"
 codesign --verify --deep --strict "$APP_BUNDLE"
 
-echo "Developer ID and Apple notarization are outside this product scope; ad-hoc bundle integrity was verified."
+if [[ "${DEEPSEEK_HARNESS_SIGNING_MODE:-adhoc}" == "developer-id" ]]; then
+  signing_details="$(codesign -dvvv "$APP_BUNDLE" 2>&1 || true)"
+  grep -Eq 'Authority=Developer ID Application:' <<<"$signing_details" \
+    || { echo "Release validation failed: missing Developer ID Application signature" >&2; exit 1; }
+  grep -Eq 'flags=.*runtime' <<<"$signing_details" \
+    || { echo "Release validation failed: missing Hardened Runtime" >&2; exit 1; }
+  echo "Developer ID Application and Hardened Runtime were verified."
+else
+  echo "Ad-hoc bundle integrity was verified; Developer ID and notarization were not requested."
+fi
 
 echo "Release validation passed: $APP_BUNDLE"

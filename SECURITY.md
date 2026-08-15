@@ -19,8 +19,9 @@ and a suggested mitigation. Do not include live credentials in the report.
 
 ## Release security boundary
 
-The current release model uses a controlled HTTPS Runtime feed with artifact
-size and SHA-256 checks. It deliberately does not implement Developer ID,
-notarization, or a public-key signature. Treat the Runtime feed and release
-assets as trusted-channel inputs and verify the published checksums before
-redistribution.
+The Runtime feed uses HTTPS, artifact size checks, and SHA-256 checks. Local
+release signing supports an optional Developer ID Application identity with
+Hardened Runtime; the signing private key is never stored in this repository.
+GitHub-hosted builds remain ad-hoc unless a separately controlled signing job
+imports a short-lived certificate into a temporary keychain. Verify published
+checksums before redistribution.

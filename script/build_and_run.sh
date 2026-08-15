@@ -86,14 +86,10 @@ cat >"$INFO_PLIST" <<PLIST
 PLIST
 
 RUNTIME_NODE="$APP_RESOURCES/runtime/node/bin/node"
-if [[ -x "$RUNTIME_NODE" ]]; then
-  codesign --force --sign - "$RUNTIME_NODE"
-fi
-# The product deliberately ships through a controlled channel without
-# Developer ID/notarization. Ad-hoc signing still gives local builds a sealed
-# resource map and lets the bundle pass deterministic integrity checks.
-codesign --force --deep --sign - "$APP_BUNDLE"
-codesign --verify --deep --strict "$APP_BUNDLE"
+DEEPSEEK_HARNESS_SIGNING_MODE="${DEEPSEEK_HARNESS_SIGNING_MODE:-adhoc}" \
+  DEEPSEEK_HARNESS_SIGNING_IDENTITY="${DEEPSEEK_HARNESS_SIGNING_IDENTITY:-}" \
+  DEEPSEEK_HARNESS_ENTITLEMENTS="${DEEPSEEK_HARNESS_ENTITLEMENTS:-}" \
+  "$ROOT_DIR/script/sign_app_bundle.sh" "$APP_BUNDLE"
 REQUIRE_BUNDLED_RUNTIME="${REQUIRE_BUNDLED_RUNTIME:-0}" \
   "$ROOT_DIR/script/validate_app_bundle.sh" "$APP_BUNDLE"
 
