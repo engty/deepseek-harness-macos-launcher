@@ -29,6 +29,10 @@ fi
 export DSH_HOME="$DSH_HOME_VALUE"
 export DSH_LAUNCHER="DeepSeekHarnessCLI"
 
+RUNTIME_TOOLCHAIN_BIN="$RUNTIME_ROOT/node_modules/.bin"
+RUNTIME_NODE_BIN="$RUNTIME_ROOT/node/bin"
+export PATH="$RUNTIME_TOOLCHAIN_BIN:$RUNTIME_NODE_BIN:${PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
+
 if [[ -x "$NODE_EXECUTABLE" ]]; then
   exec "$NODE_EXECUTABLE" "$DSH_EXECUTABLE" plugin --profile web "$@"
 fi

@@ -192,10 +192,27 @@ final class LauncherModel: ObservableObject {
         do {
             let arguments = try PluginCommandParser.parseInstallCommand(command)
             let specs = Array(arguments.dropFirst()).joined(separator: " ")
-            guard confirmPluginMutation(operation: "安装", spec: specs) else { return }
-            Task { await mutatePlugin(arguments: arguments, operation: "Installing Plugin") }
+            let installation = try locator.locate()
+            let dependencyPlan = try pluginRunner.dependencyPlan(
+                installation: installation,
+                paths: paths,
+                arguments: arguments
+            )
+            guard confirmPluginMutation(
+                operation: "安装",
+                spec: specs,
+                dependencyPlan: dependencyPlan
+            ) else { return }
+            Task {
+                await mutatePlugin(
+                    arguments: arguments,
+                    operation: "Installing Plugin",
+                    userOperation: "安装",
+                    dependencyPlan: dependencyPlan
+                )
+            }
         } catch {
-            presentInfoAlert(title: "安装命令无法识别", message: error.localizedDescription)
+            presentInfoAlert(title: "无法准备插件安装", message: error.localizedDescription)
         }
     }
 
@@ -203,8 +220,30 @@ final class LauncherModel: ObservableObject {
         let selected = promptForPluginSelection(title: "卸载 Harness 插件", operation: "卸载")
         guard !selected.isEmpty else { return }
         let names = selected.map(\.name).joined(separator: ", ")
-        guard confirmPluginMutation(operation: "卸载", spec: names) else { return }
-        Task { await mutatePlugin(arguments: ["remove"] + selected.map(\.id), operation: "Removing Plugins") }
+        let arguments = ["remove"] + selected.map(\.id)
+        do {
+            let installation = try locator.locate()
+            let dependencyPlan = try pluginRunner.dependencyPlan(
+                installation: installation,
+                paths: paths,
+                arguments: arguments
+            )
+            guard confirmPluginMutation(
+                operation: "卸载",
+                spec: names,
+                dependencyPlan: dependencyPlan
+            ) else { return }
+            Task {
+                await mutatePlugin(
+                    arguments: arguments,
+                    operation: "Removing Plugins",
+                    userOperation: "卸载",
+                    dependencyPlan: dependencyPlan
+                )
+            }
+        } catch {
+            presentInfoAlert(title: "无法准备插件卸载", message: error.localizedDescription)
+        }
     }
 
     func stopPluginPrompt() {
@@ -321,9 +360,17 @@ final class LauncherModel: ObservableObject {
         }
     }
 
-    private func mutatePlugin(arguments: [String], operation: String) async {
+    private func mutatePlugin(
+        arguments: [String],
+        operation: String,
+        userOperation: String,
+        dependencyPlan: PluginDependencyPlan
+    ) async {
         guard let installation = try? locator.locate() else {
-            phase = .runtimeMissing("插件管理需要可执行的 Harness Runtime。")
+            let message = "插件管理需要可执行的 Harness Runtime。"
+            phase = .runtimeMissing(message)
+            lastError = message
+            presentInfoAlert(title: "插件\(userOperation)失败", message: message)
             return
         }
 
@@ -335,14 +382,37 @@ final class LauncherModel: ObservableObject {
             _ = try await pluginRunner.mutateProfile(
                 installation: installation,
                 paths: paths,
-                arguments: arguments
+                arguments: arguments,
+                dependencyPlan: dependencyPlan
             )
             plugins = profileManager.refresh()
-            if wasRunning { await start() } else { phase = .stopped }
+            if wasRunning {
+                await start()
+                guard phase.isReady else {
+                    let restartError = lastError ?? "Harness 重启失败。"
+                    lastError = "插件(userOperation)已完成，但 Harness 重启失败：(restartError)"
+                    presentInfoAlert(
+                        title: "插件(userOperation)完成，但 Harness 未启动",
+                        message: lastError ?? restartError
+                    )
+                    return
+                }
+            } else {
+                phase = .stopped
+            }
+            lastError = nil
+            AppLogger.plugins.info("Plugin \(userOperation, privacy: .public) succeeded")
+            presentInfoAlert(title: "插件\(userOperation)完成", message: "DeepSeek Harness 的 web profile 已更新。")
         } catch {
-            lastError = error.localizedDescription
-            phase = .failed(error.localizedDescription)
+            let message = error.localizedDescription
+            lastError = message
+            phase = .failed(message)
             if wasRunning { await start() }
+            // start() intentionally clears transient state on a successful
+            // restart; restore the mutation error so it remains visible.
+            lastError = message
+            AppLogger.plugins.error("Plugin \(userOperation, privacy: .public) failed: \(message, privacy: .public)")
+            presentInfoAlert(title: "插件\(userOperation)失败", message: message)
         }
     }
 
@@ -679,10 +749,15 @@ final class LauncherModel: ObservableObject {
         return value.isEmpty ? nil : value
     }
 
-    private func confirmPluginMutation(operation: String, spec: String) -> Bool {
+    private func confirmPluginMutation(
+        operation: String,
+        spec: String,
+        dependencyPlan: PluginDependencyPlan? = nil
+    ) -> Bool {
         let alert = NSAlert()
         alert.messageText = "确认\(operation) Harness 插件？"
-        alert.informativeText = "目标：\(spec)\n\nLauncher 会把当前 web profile 复制到 staging，执行官方 dsh plugin 命令或 profile patch，并执行候选启动预检。插件可能包含本地代码和 lifecycle/build script；请确认来源可信。"
+        let dependencyText = dependencyPlan.map { "\n\n\($0.confirmationText)" } ?? ""
+        alert.informativeText = "目标：\(spec)\n\nLauncher 会把当前 web profile 复制到 staging，执行官方 dsh plugin 命令或 profile patch，并执行候选启动预检。插件可能包含本地代码和 lifecycle/build script；请确认来源可信。\(dependencyText)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "继续")
         alert.addButton(withTitle: "取消")

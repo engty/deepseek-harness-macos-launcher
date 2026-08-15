@@ -9,6 +9,7 @@ Resources/runtime/
   node/
   dsh/
   node_modules/
+    .bin/pnpm
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -18,7 +19,10 @@ bundle.
 The local development workspace may also contain an ignored `runtime/`
 fixture with the currently verified Node and Harness dependency tree. Release
 builds must replace it with the controlled-channel Runtime Bundle rather than
-committing `node_modules` to the source repository.
+committing `node_modules` to the source repository. The release bundle must
+include a pinned `pnpm` package under `node_modules/.bin/pnpm`; the Launcher
+gives that private directory to Harness child processes without changing the
+user's shell PATH.
 
 Development builds may point the launcher at an existing runtime with:
 

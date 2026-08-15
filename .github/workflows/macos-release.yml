@@ -14,6 +14,7 @@ permissions:
 
 env:
   NODE_VERSION: '22.18.0'
+  PNPM_VERSION: '10.19.0'
   HARNESS_VERSION: '0.1.0-rc.6'
 
 jobs:
@@ -44,7 +45,9 @@ jobs:
           set -euo pipefail
           runtime_source="$RUNNER_TEMP/harness-runtime"
           mkdir -p "$runtime_source"
-          npm install --prefix "$runtime_source" --ignore-scripts --no-audit --no-fund "@deepseek-ai/dsh@${HARNESS_VERSION}"
+          npm install --prefix "$runtime_source" --ignore-scripts --no-audit --no-fund \
+            "@deepseek-ai/dsh@${HARNESS_VERSION}" \
+            "pnpm@${PNPM_VERSION}"
           HARNESS_RUNTIME_SOURCE="$runtime_source" \
             HARNESS_NODE_PATH="$(command -v node)" \
             ./script/package_runtime.sh

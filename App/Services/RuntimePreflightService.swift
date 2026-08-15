@@ -32,6 +32,7 @@ final class RuntimePreflightService {
             installation: installation,
             arguments: ["--version"],
             dshHome: dshHome,
+            paths: paths,
             currentDirectory: currentDirectory
         )
         guard version.status == 0 else { throw RuntimePreflightError.versionFailed(version.output) }
@@ -43,6 +44,7 @@ final class RuntimePreflightService {
             installation: installation,
             arguments: ["--profile", "web", "--dump-config"],
             dshHome: dshHome,
+            paths: paths,
             currentDirectory: currentDirectory
         )
         guard config.status == 0 else { throw RuntimePreflightError.configFailed(config.output) }
@@ -57,6 +59,7 @@ final class RuntimePreflightService {
         installation: RuntimeInstallation,
         arguments: [String],
         dshHome: URL,
+        paths: AppPaths,
         currentDirectory: URL
     ) async throws -> Result {
         let process = Process()
@@ -74,6 +77,10 @@ final class RuntimePreflightService {
         var environment = ProcessInfo.processInfo.environment
         environment["DSH_HOME"] = dshHome.path
         environment["DSH_LAUNCHER"] = "DeepSeekHarness"
+        environment["PATH"] = PluginDependencyService(
+            environment: environment,
+            privateToolchainRoot: paths.toolchain
+        ).runtimeSearchPath(installation: installation)
         process.environment = environment
 
         return try await withCheckedThrowingContinuation { continuation in

@@ -71,6 +71,10 @@ final class HarnessProcessController {
         var environment = ProcessInfo.processInfo.environment
         environment["DSH_HOME"] = (dshHomeOverride ?? paths.dshHome).path
         environment["DSH_LAUNCHER"] = "DeepSeekHarness"
+        environment["PATH"] = PluginDependencyService(
+            environment: environment,
+            privateToolchainRoot: paths.toolchain
+        ).runtimeSearchPath(installation: installation)
         process.environment = environment
 
         self.process = process

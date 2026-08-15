@@ -24,6 +24,18 @@ else
   exit 2
 fi
 
+if [[ -n "$RUNTIME_SOURCE" ]]; then
+  [[ -x "$SOURCE_ROOT/node_modules/.bin/pnpm" ]] || {
+    echo "Runtime source 中没有 node_modules/.bin/pnpm；请把固定版本 pnpm 一起安装到 Runtime。" >&2
+    exit 2
+  }
+else
+  [[ -x "$SOURCE_ROOT/.bin/pnpm" ]] || {
+    echo "Runtime source 中没有 .bin/pnpm；请把固定版本 pnpm 一起安装到 Runtime。" >&2
+    exit 2
+  }
+fi
+
 STAGING_ROOT="$(mktemp -d -t deepseek-harness-runtime)"
 trap 'rm -rf "$STAGING_ROOT"' EXIT
 mkdir -p "$STAGING_ROOT/runtime/node/bin"

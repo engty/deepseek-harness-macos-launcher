@@ -29,7 +29,8 @@ redistribution. Installing it is an explicit user action.
 ## Other dependencies
 
 Node.js, Swift, SwiftUI, AppKit, WebKit, pnpm, and transitive npm packages are
-used by the build or Runtime Bundle. Their respective licenses remain with
+used by the build or Runtime Bundle. The release workflow pins pnpm
+(10.19.0) inside the App Runtime; it is not installed globally. Their respective licenses remain with
 their authors. A release artifact built with the workflow includes the
 Runtime dependency tree; inspect the corresponding upstream package metadata
 before redistributing a modified artifact.

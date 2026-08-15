@@ -6,6 +6,7 @@ struct AppPaths {
     let applicationSupport: URL
     let caches: URL
     let logs: URL
+    let toolchain: URL
 
     init(fileManager: FileManager = .default) {
         let applicationSupportRoot = fileManager.urls(
@@ -32,6 +33,7 @@ struct AppPaths {
         self.applicationSupport = applicationSupport
         self.caches = caches
         self.logs = logs
+        self.toolchain = applicationSupport.appendingPathComponent("toolchain", isDirectory: true)
     }
 
     var state: URL { applicationSupport.appendingPathComponent("state", isDirectory: true) }
@@ -46,6 +48,7 @@ struct AppPaths {
     var overlay: URL { state.appendingPathComponent("launcher-web-overlay.cordis.patch.yml") }
     var sidecarPID: URL { state.appendingPathComponent("harness-sidecar.pid") }
     var pluginStaging: URL { caches.appendingPathComponent("plugin-staging", isDirectory: true) }
+    var pluginOperationsLog: URL { logs.appendingPathComponent("plugin-operations.log") }
     var backups: URL { applicationSupport.appendingPathComponent("backups", isDirectory: true) }
     var diagnostics: URL { applicationSupport.appendingPathComponent("diagnostics", isDirectory: true) }
 
@@ -59,6 +62,7 @@ struct AppPaths {
             activeDataSlot,
             runtimes,
             dshHome,
+            toolchain,
             pluginStaging,
             backups,
             diagnostics

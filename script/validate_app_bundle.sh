@@ -34,6 +34,8 @@ if [[ "$REQUIRE_BUNDLED_RUNTIME" == "1" || -d "$RUNTIME_ROOT" ]]; then
   [[ -d "$RUNTIME_ROOT" ]] || fail "bundled Runtime is required but missing"
   [[ -x "$RUNTIME_ROOT/node_modules/.bin/dsh" || -x "$RUNTIME_ROOT/bin/dsh" || -x "$RUNTIME_ROOT/dsh" ]] \
     || fail "bundled Runtime has no executable dsh"
+  [[ -x "$RUNTIME_ROOT/node_modules/.bin/pnpm" ]] \
+    || fail "bundled Runtime has no executable pnpm"
   if [[ -e "$RUNTIME_ROOT/node" ]]; then
     [[ -x "$RUNTIME_ROOT/node/bin/node" ]] || fail "bundled Node is present but not executable"
   fi

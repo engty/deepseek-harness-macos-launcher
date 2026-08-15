@@ -13,7 +13,7 @@
 
 GitHub Release 只提供 DMG，避免为同一个 App 保存两份近乎相同的发行包。打开 DMG 后，直接把窗口中的 `DeepSeek Harness.app` 拖到旁边的 `Applications` 快捷方式即可完成安装。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
 
-源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js 与 `@deepseek-ai/dsh`，再把 Runtime Bundle 放进 App。
+源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js、`@deepseek-ai/dsh` 与 `pnpm`，再把 Runtime Bundle 放进 App。插件命令使用 App 私有 PATH，不会修改用户的 Shell 配置、Homebrew 或全局 npm/pnpm。
 
 ### 首次运行显示“App 已损坏”
 
@@ -95,7 +95,7 @@ Runtime 更新只信任配置的 HTTPS feed；发布方需要自行维护 feed�
 
 `compatibility-matrix.json` 只记录 Shell、Harness、Node 和 Launcher 已验证的插件操作组合，不承诺全量第三方插件兼容；Provider canary 和插件许可证审核由上游/插件发布方负责。
 
-`script/validate_app_bundle.sh` 和 `script/validate_release.sh` 是发布前的只读自检：校验 App 元数据、图标、Bundle 完整性和内置 Runtime 的 `dsh`/Node 入口。
+`script/validate_app_bundle.sh` 和 `script/validate_release.sh` 是发布前的只读自检：校验 App 元数据、图标、Bundle 完整性和内置 Runtime 的 `dsh`/Node/`pnpm` 入口。
 
 ## 来源与引用
 
