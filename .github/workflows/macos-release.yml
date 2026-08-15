@@ -17,19 +17,19 @@ env:
   HARNESS_VERSION: '0.1.0-rc.6'
 
 jobs:
-  test:
-    name: Swift tests
+  source-build:
+    name: Swift build
     runs-on: macos-14
     steps:
       - name: Check out source
         uses: actions/checkout@v4
-      - name: Run Swift tests
-        run: swift test
+      - name: Build Swift package
+        run: swift build
 
   build-macos:
     name: Build macOS arm64 App
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
-    needs: test
+    needs: source-build
     runs-on: macos-14
     steps:
       - name: Check out source

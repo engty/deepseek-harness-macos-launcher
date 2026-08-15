@@ -62,7 +62,7 @@ REQUIRE_BUNDLED_RUNTIME=1 ./script/validate_app_bundle.sh dist/HarnessLauncher.a
 ./script/validate_release.sh dist/HarnessLauncher.app
 ```
 
-GitHub Actions 的 macOS 发布构建使用同一套验证脚本：`swift test`、固定 Runtime 组装、Bundle 校验、App 压缩和 SHA-256 清单。发布触发条件为推送 `v*` 标签，手动构建可以在 Actions 页面执行 `workflow_dispatch`。
+GitHub Actions 的 macOS 发布构建使用同一套验证脚本：macOS 14 runner 上的 `swift build`、固定 Runtime 组装、Bundle 校验、App 压缩和 SHA-256 清单。源码测试使用 Swift Testing，当前本地 Swift 6 工具链可运行 `swift test`；macOS 14 公共 runner 的 Swift 5.10 不包含该测试模块，因此发布门禁使用 `swift build`，避免把工具链差异误判为产品编译失败。发布触发条件为推送 `v*` 标签，手动构建可以在 Actions 页面执行 `workflow_dispatch`。
 
 本地和受控渠道构建使用 ad-hoc 签名；本项目不实现 Developer ID、Apple notarization 或 staple。
 
