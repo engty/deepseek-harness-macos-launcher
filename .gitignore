@@ -1,0 +1,26 @@
+.build/
+dist/
+.DS_Store
+
+# Local tooling/editor state
+.codex/
+
+# Credentials and local configuration
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.mobileprovision
+auth.json
+credentials.json
+
+# Logs and local archives
+*.log
+*.zip
+*.dmg
+
+# Local app data and developer runtime overrides
+.codex/local/
+Resources/runtime/
+Resources/runtime.backup.*/

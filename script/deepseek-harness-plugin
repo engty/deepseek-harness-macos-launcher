@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$(basename "$SCRIPT_DIR")" == "bin" && "$(basename "$(dirname "$SCRIPT_DIR")")" == "Resources" ]]; then
+  RUNTIME_ROOT="$SCRIPT_DIR/../runtime"
+  DEFAULT_HOME="${HOME}/Library/Application Support/com.harness.desktop.launcher/data/active/dsh-home"
+else
+  PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+  RUNTIME_ROOT="$PROJECT_ROOT/Resources/runtime"
+  DEFAULT_HOME="${HOME}/Library/Application Support/com.harness.desktop.launcher/data/active/dsh-home"
+fi
+
+DSH_HOME_VALUE="${DSH_HOME:-$DEFAULT_HOME}"
+NODE_EXECUTABLE="${HARNESS_NODE_PATH:-$RUNTIME_ROOT/node/bin/node}"
+DSH_EXECUTABLE="${HARNESS_DSH_PATH:-$RUNTIME_ROOT/node_modules/.bin/dsh}"
+
+if [[ ! -x "$DSH_EXECUTABLE" ]]; then
+  DSH_EXECUTABLE="$RUNTIME_ROOT/bin/dsh"
+fi
+if [[ ! -x "$DSH_EXECUTABLE" ]]; then
+  DSH_EXECUTABLE="$RUNTIME_ROOT/dsh"
+fi
+if [[ ! -x "$DSH_EXECUTABLE" ]]; then
+  echo "没有找到 DeepSeek Harness Runtime 的 dsh。" >&2
+  exit 1
+fi
+
+export DSH_HOME="$DSH_HOME_VALUE"
+export DSH_LAUNCHER="DeepSeekHarnessCLI"
+
+if [[ -x "$NODE_EXECUTABLE" ]]; then
+  exec "$NODE_EXECUTABLE" "$DSH_EXECUTABLE" plugin --profile web "$@"
+fi
+exec "$DSH_EXECUTABLE" plugin --profile web "$@"

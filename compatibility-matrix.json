@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "updatedAt": "2026-08-15",
+  "shell": {
+    "product": "DeepSeek Harness",
+    "bundleIdentifier": "com.harness.desktop.launcher",
+    "version": "0.1.0-dev",
+    "minimumMacOS": "13.0",
+    "architectures": ["arm64", "x86_64"]
+  },
+  "runtime": {
+    "package": "@deepseek-ai/dsh",
+    "version": "0.1.0-rc.6",
+    "sourceCommit": "47f943859bef60e4160492346772ded9b24f765a",
+    "nodeVersion": "22.18.0",
+    "channel": "preview",
+    "artifactRequired": true
+  },
+  "plugins": {
+    "dsh-llm-codex": {
+      "versions": ["0.1.1"],
+      "status": "experimental",
+      "distribution": "standard-plugin-only",
+      "launcherVerifiedOperations": ["install", "remove", "stop"],
+      "providerCompatibilityOwner": "plugin-and-harness-upstream"
+    }
+  },
+  "launcherScope": {
+    "runtimeUpdateTrust": "unsigned-https-sha256",
+    "pluginCompatibility": "standard-protocol-and-current-profile-preflight",
+    "fullPluginMatrix": "owned-by-harness-and-plugin-authors",
+    "codexProviderCanary": "owned-by-dsh-llm-codex-and-upstream",
+    "pluginLicenseReview": "not-owned-by-launcher",
+    "developerID": "not-required",
+    "notarization": "not-required"
+  }
+}
