@@ -52,16 +52,20 @@ jobs:
         env:
           APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev' }}
         run: ./script/build_and_run.sh --build-only
-      - name: Package downloadable archive
+      - name: Package downloadable DMG
         shell: bash
         run: |
           set -euo pipefail
           release_dir="$RUNNER_TEMP/deepseek-harness-release"
           release_app="$release_dir/DeepSeek Harness.app"
+          applications_link="$release_dir/Applications"
           disk_image="$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.dmg"
-          rm -rf "$release_dir" "$release_app" "$disk_image"
+          rm -rf "$release_dir" "$release_app" "$applications_link" "$disk_image"
           mkdir -p "$release_dir"
           ditto dist/HarnessLauncher.app "$release_app"
+          # Standard macOS drag-to-install layout: the App and an
+          # Applications shortcut are visible together in the mounted window.
+          ln -s /Applications "$applications_link"
           hdiutil create \
             -volname "DeepSeek Harness" \
             -srcfolder "$release_dir" \

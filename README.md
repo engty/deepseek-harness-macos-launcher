@@ -11,7 +11,7 @@
 - `DeepSeek-Harness-macos-arm64.dmg`
 - `SHA256SUMS.txt`
 
-GitHub Release 只提供 DMG，避免为同一个 App 保存两份近乎相同的发行包。打开 DMG 后将 `DeepSeek Harness.app` 拖入 Applications。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
+GitHub Release 只提供 DMG，避免为同一个 App 保存两份近乎相同的发行包。打开 DMG 后，直接把窗口中的 `DeepSeek Harness.app` 拖到旁边的 `Applications` 快捷方式即可完成安装。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
 
 源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js 与 `@deepseek-ai/dsh`，再把 Runtime Bundle 放进 App。
 
