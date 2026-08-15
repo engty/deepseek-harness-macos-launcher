@@ -58,12 +58,10 @@ jobs:
           set -euo pipefail
           release_dir="$RUNNER_TEMP/deepseek-harness-release"
           release_app="$release_dir/DeepSeek Harness.app"
-          archive="$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.zip"
           disk_image="$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.dmg"
-          rm -rf "$release_dir" "$release_app" "$archive" "$disk_image"
+          rm -rf "$release_dir" "$release_app" "$disk_image"
           mkdir -p "$release_dir"
           ditto dist/HarnessLauncher.app "$release_app"
-          ditto -c -k --sequesterRsrc --keepParent "$release_app" "$archive"
           hdiutil create \
             -volname "DeepSeek Harness" \
             -srcfolder "$release_dir" \
@@ -73,8 +71,7 @@ jobs:
           (
             cd "$RUNNER_TEMP"
             shasum -a 256 \
-              "DeepSeek-Harness-macos-arm64.dmg" \
-              "DeepSeek-Harness-macos-arm64.zip" > "SHA256SUMS.txt"
+              "DeepSeek-Harness-macos-arm64.dmg" > "SHA256SUMS.txt"
           )
           cat "$RUNNER_TEMP/SHA256SUMS.txt"
       - name: Upload workflow artifact
@@ -83,7 +80,6 @@ jobs:
           name: DeepSeek-Harness-macos-arm64
           path: |
             ${{ runner.temp }}/DeepSeek-Harness-macos-arm64.dmg
-            ${{ runner.temp }}/DeepSeek-Harness-macos-arm64.zip
             ${{ runner.temp }}/SHA256SUMS.txt
       - name: Publish GitHub Release for version tag
         if: startsWith(github.ref, 'refs/tags/v')
@@ -93,7 +89,6 @@ jobs:
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" \
               "$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.dmg" \
-              "$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.zip" \
               "$RUNNER_TEMP/SHA256SUMS.txt" \
               --clobber
           else
@@ -101,6 +96,5 @@ jobs:
               --title "DeepSeek Harness $GITHUB_REF_NAME" \
               --generate-notes \
               "$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.dmg" \
-              "$RUNNER_TEMP/DeepSeek-Harness-macos-arm64.zip" \
               "$RUNNER_TEMP/SHA256SUMS.txt"
           fi

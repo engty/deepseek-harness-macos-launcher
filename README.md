@@ -9,16 +9,15 @@
 带 `v*` 标签的提交会由 GitHub Actions 在 macOS 14 runner 上构建 Apple Silicon (`arm64`) App，并自动创建 GitHub Release。Release 中包含：
 
 - `DeepSeek-Harness-macos-arm64.dmg`
-- `DeepSeek-Harness-macos-arm64.zip`
 - `SHA256SUMS.txt`
 
-GitHub Release 同时提供 `DeepSeek-Harness-macos-arm64.dmg`（推荐）和 ZIP 备用包。打开 DMG 后将 `DeepSeek Harness.app` 拖入 Applications。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
+GitHub Release 只提供 DMG，避免为同一个 App 保存两份近乎相同的发行包。打开 DMG 后将 `DeepSeek Harness.app` 拖入 Applications。公共 GitHub runner 默认使用 ad-hoc 签名，不包含 Developer ID 或 Apple notarization；DMG 只是分发封装格式，未 notarize 的网络下载 App 首次运行仍可能需要在 macOS 的隐私与安全性设置中允许打开。
 
 源码仓库不提交 `Resources/runtime/`、`dist/`、用户 profile 或任何凭证。Release 构建会临时安装固定版本的 Node.js 与 `@deepseek-ai/dsh`，再把 Runtime Bundle 放进 App。
 
 ### 首次运行显示“App 已损坏”
 
-这通常是 macOS Gatekeeper 对未 notarize 的网络下载 App 的提示，不代表 DMG/ZIP 内容真的损坏。请先从 Release 的 `SHA256SUMS.txt` 校验下载包，再使用 macOS 自带方式打开 DMG 或解压 ZIP；不要让第三方压缩工具改写 App Bundle。然后可以右键 App 选择“打开”，或在“系统设置 → 隐私与安全性”中选择“仍要打开”。
+这通常是 macOS Gatekeeper 对未 notarize 的网络下载 App 的提示，不代表 DMG 内容真的损坏。请先从 Release 的 `SHA256SUMS.txt` 校验下载包，再使用 macOS 自带方式打开 DMG；不要让第三方工具改写 App Bundle。然后可以右键 App 选择“打开”，或在“系统设置 → 隐私与安全性”中选择“仍要打开”。
 
 如果系统仍然阻止一个已核对 SHA-256、来源可信的 App，可以只对该 App 移除下载隔离属性：
 
@@ -76,7 +75,7 @@ REQUIRE_BUNDLED_RUNTIME=1 ./script/validate_app_bundle.sh dist/HarnessLauncher.a
 ./script/validate_release.sh dist/HarnessLauncher.app
 ```
 
-GitHub Actions 的 macOS 发布构建使用同一套验证脚本：macOS 14 runner 上的 `swift build`、固定 Runtime 组装、Bundle 校验、App 压缩和 SHA-256 清单。源码测试使用 Swift Testing，当前本地 Swift 6 工具链可运行 `swift test`；macOS 14 公共 runner 的 Swift 5.10 不包含该测试模块，因此发布门禁使用 `swift build`，避免把工具链差异误判为产品编译失败。发布触发条件为推送 `v*` 标签，手动构建可以在 Actions 页面执行 `workflow_dispatch`。
+GitHub Actions 的 macOS 发布构建使用同一套验证脚本：macOS 14 runner 上的 `swift build`、固定 Runtime 组装、Bundle 校验、DMG 封装和 SHA-256 清单。源码测试使用 Swift Testing，当前本地 Swift 6 工具链可运行 `swift test`；macOS 14 公共 runner 的 Swift 5.10 不包含该测试模块，因此发布门禁使用 `swift build`，避免把工具链差异误判为产品编译失败。发布触发条件为推送 `v*` 标签，手动构建可以在 Actions 页面执行 `workflow_dispatch`。
 
 本地开发默认使用 ad-hoc 签名；在已安装 Developer ID 私钥的签名机器上，可通过 `DEEPSEEK_HARNESS_SIGNING_MODE=developer-id` 生成带 Hardened Runtime 的正式签名包。GitHub runner 不保存证书私钥，因此不会默认执行 Developer ID 签名或 notarization；需要时应通过临时钥匙串和 GitHub encrypted secrets 配置独立的发布作业。
 
