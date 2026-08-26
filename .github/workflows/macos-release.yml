@@ -50,6 +50,9 @@ jobs:
       # can always be identified without opening it.
       APP_VERSION: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev' }}
       DMG_NAME: DeepSeek-Harness-${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || '0.1.0-dev' }}-macos-arm64.dmg
+      # npm may resolve a large Harness dependency graph; the default Node.js
+      # heap on GitHub's runner is too small for this installation.
+      NODE_OPTIONS: --max-old-space-size=4096
     steps:
       - name: Check out source
         uses: actions/checkout@v4
