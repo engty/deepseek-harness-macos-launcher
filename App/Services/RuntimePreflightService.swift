@@ -70,22 +70,14 @@ final class RuntimePreflightService {
             privateToolchainRoot: paths.toolchain
         ).runtimeSearchPath(installation: installation)
 
-        let executable: URL
-        let fullArguments: [String]
-        if let nodeExecutable = installation.nodeExecutable {
-            executable = nodeExecutable
-            fullArguments = [installation.executable.path] + arguments
-        } else {
-            executable = installation.executable
-            fullArguments = arguments
-        }
+        let command = installation.command(arguments: arguments)
 
         // Streams output while the child runs and enforces a hard timeout, so
         // a broken candidate Runtime can neither fill the pipe (deadlock) nor
         // hang the update flow forever.
         let result = try await SubprocessRunner.run(
-            executable: executable,
-            arguments: fullArguments,
+            executable: command.executable,
+            arguments: command.arguments,
             environment: environment,
             currentDirectory: currentDirectory,
             timeout: 60

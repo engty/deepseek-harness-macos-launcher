@@ -10,6 +10,8 @@ Resources/runtime/
   dsh/
   node_modules/
     .bin/pnpm
+  default-profile/
+    profiles/web/       # fresh-install profile, currently dsh1024
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -33,6 +35,11 @@ HARNESS_DSH_PATH=/absolute/path/to/dsh ./script/build_and_run.sh
 The launcher never runs `git pull` or builds the Harness source tree on a user
 machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
+
+The Runtime Bundle also contains a pinned default web profile with `dsh1024`
+(currently `0.5.0`). On first launch, the Launcher copies that profile into the
+App-owned `$DSH_HOME` only when no user profile exists. Existing profiles are
+left untouched, so removing the default plugin is not undone on restart.
 
 Dependencies that are not shipped in the Runtime are never installed globally.
 The controlled recovery list is stored under the App's private Application

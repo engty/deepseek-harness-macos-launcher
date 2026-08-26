@@ -210,13 +210,9 @@ final class PluginCommandRunner {
         let process = Process()
         let outputPipe = Pipe()
         let outputBuffer = BoundedSubprocessOutputBuffer(limit: 4 * 1_024 * 1_024)
-        if let nodeExecutable = installation.nodeExecutable {
-            process.executableURL = nodeExecutable
-            process.arguments = [installation.executable.path] + arguments
-        } else {
-            process.executableURL = installation.executable
-            process.arguments = arguments
-        }
+        let command = installation.command(arguments: arguments)
+        process.executableURL = command.executable
+        process.arguments = command.arguments
         process.currentDirectoryURL = currentDirectory
         process.standardOutput = outputPipe
         process.standardError = outputPipe

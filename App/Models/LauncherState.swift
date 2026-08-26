@@ -37,6 +37,16 @@ enum PluginRuntimeState: String, Equatable {
     case starting = "Starting"
     case stopping = "Stopping"
     case error = "Error"
+
+    var displayName: String {
+        switch self {
+        case .running: return "运行中"
+        case .stopped: return "已停用"
+        case .starting: return "启动中"
+        case .stopping: return "停止中"
+        case .error: return "错误"
+        }
+    }
 }
 
 enum RuntimeUpdateState: Equatable {

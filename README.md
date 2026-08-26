@@ -17,19 +17,19 @@
 1. **下载**：到本仓库的 [Releases](https://github.com/engty/deepseek-harness-macos-launcher/releases) 页面，下载 `DeepSeek-Harness-v<版本号>-macos-arm64.dmg`（文件名就带着版本，下载后一眼可辨）。
 2. **安装**：打开 DMG，把 `DeepSeek Harness.app` 拖到旁边的 `Applications` 里。
 3. **首次打开**：App 未做官方签名，系统可能提示"无法验证开发者"——右键点 App 选"打开"，或在"系统设置 → 隐私与安全性"里点"仍要打开"即可。
-4. **配置 API Key**：打开 App 后，从 `DeepSeek → Change DeepSeek API Key…` 输入你的 DeepSeek API Key。聊天和余额查询共用同一个 Key；余额会继续显示在右上角，对话框中的“充值”按钮会打开官方 `https://platform.deepseek.com/usage` 页面。
-5. **装插件**：菜单栏 `Plugins → Install Plugin…`，粘贴官方安装命令即可，例如：
+4. **配置 API Key**：打开 App 后，从 `设置 → 更换 DeepSeek API 密钥…` 输入你的 DeepSeek API Key。聊天和余额查询共用同一个 Key；余额会继续显示在右上角，对话框中的“充值”按钮会打开官方 `https://platform.deepseek.com/usage` 页面。
+5. **装插件**：菜单栏 `插件 → 安装插件…`，粘贴官方安装命令即可，例如：
    ```
    dsh plugin --profile web add dsh-llm-codex
    ```
-   装好的插件可以在同一菜单里启动、停用或卸载。
-6. **更新**：App 会静默检查 Harness 更新，有新版时右上角只显示下载按钮，一键升级、失败自动回退；`DeepSeek → Check DeepSeek Harness App Updates…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
+   App 首次启动时默认已经带有 `dsh1024`（当前锁定 `0.5.0`），它的 1024Store 内容会出现在 Harness 页面侧边栏；装好的插件可以在同一菜单里启动、停用、卸载或清理缓存。插件 profile 保存在 App 私有 DSH_HOME；pnpm 的共享缓存沿用用户环境以兼容更多插件，卸载和“清理插件缓存”会在确认后回收未使用缓存。用户卸载默认插件后不会在重启时自动装回。
+6. **更新**：App 会静默检查 Harness 更新，有新版时右上角只显示下载按钮，一键升级、失败自动回退；`设置 → 检查 DeepSeek Harness 更新…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
 
 ## 安全性
 
 - **API Key 只留在你的电脑上**：一份存 macOS Keychain，一份存 Harness 的私有凭据文件（仅当前用户可读）。不上传到任何服务器，没有遥测、没有广告、没有账号系统。
 - **界面只连本机**：窗口里加载的是运行在你电脑上的 Harness 界面（127.0.0.1），只有你主动点击的外部链接才会交给系统浏览器打开。
-- **不碰你的系统环境**：App 在私有目录里运行 Harness 和插件，不会改你的 Node.js、npm、pnpm 或 Shell 配置。
+- **不碰你的系统配置**：插件 profile 和 Harness 数据保存在 App 私有目录；App 不改 Node.js、npm、pnpm 或 Shell 配置。为保持插件兼容性，pnpm 共享缓存可能沿用用户已有位置，清理时只回收未使用内容。
 - **更新经过校验**：Harness 升级包走 HTTPS 下载、SHA-256 校验、启动预检，失败自动回退到旧版本。
 - **插件是第三方代码**：安装插件前请确认来源可信，插件行为由插件作者负责。
 

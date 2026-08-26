@@ -25,12 +25,14 @@ final class LauncherModel: ObservableObject {
     private let profileManager: ProfileManager
     private let processController: HarnessProcessController
     private let pluginRunner: PluginCommandRunner
+    private let pluginCacheService: PluginCacheService
     private let updateService: RuntimeUpdateService
     private let appUpdateService: AppUpdateService
     private let runtimeInstaller: RuntimeArchiveInstaller
     private let toolchainInstaller: ToolchainInstaller
     private let dataSlotManager: DataSlotManager
     private let runtimePreflight: RuntimePreflightService
+    private let defaultProfileInstaller: DefaultProfileInstaller
     private let balanceService: DeepSeekBalanceService
     private let deepSeekCredentialStore = DeepSeekCredentialStore()
     private let deepSeekRechargeURL = URL(string: "https://platform.deepseek.com/usage")!
@@ -60,12 +62,14 @@ final class LauncherModel: ObservableObject {
         profileManager = ProfileManager(paths: paths)
         processController = HarnessProcessController()
         pluginRunner = PluginCommandRunner()
+        pluginCacheService = PluginCacheService()
         updateService = RuntimeUpdateService()
         appUpdateService = AppUpdateService()
         runtimeInstaller = RuntimeArchiveInstaller()
         toolchainInstaller = ToolchainInstaller()
         dataSlotManager = DataSlotManager()
         runtimePreflight = RuntimePreflightService()
+        defaultProfileInstaller = DefaultProfileInstaller()
         balanceService = DeepSeekBalanceService()
         processController.onUnexpectedTermination = { [weak self] output in
             self?.handleUnexpectedTermination(output)
@@ -136,6 +140,7 @@ final class LauncherModel: ObservableObject {
             let installation = try locator.locate()
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
+            try defaultProfileInstaller.seedIfNeeded(paths: paths, runtimeRoot: installation.root)
             let url = try await processController.start(
                 installation: installation,
                 paths: paths,
@@ -302,7 +307,8 @@ final class LauncherModel: ObservableObject {
                     arguments: arguments,
                     operation: "正在卸载插件",
                     userOperation: "卸载",
-                    dependencyPlan: dependencyPlan
+                    dependencyPlan: dependencyPlan,
+                    cleanupPluginsAfterRemoval: selected
                 )
             }
         } catch {
@@ -330,6 +336,29 @@ final class LauncherModel: ObservableObject {
         let names = selected.map(\.name).joined(separator: ", ")
         guard confirmPluginMutation(operation: "停用", spec: names) else { return }
         Task { await setPluginsEnabled(selected, enabled: false) }
+    }
+
+    func clearPluginCachePrompt() {
+        let entries = pluginCacheService.entries(for: profileManager.refresh(), paths: paths)
+        guard !entries.isEmpty else {
+            presentInfoAlert(title: "没有可清理的缓存", message: "当前没有发现插件或共享 pnpm 缓存。")
+            return
+        }
+
+        let selectionView = PluginCacheSelectionAccessoryView(entries: entries)
+        let alert = NSAlert()
+        alert.messageText = "清理插件缓存"
+        alert.informativeText = "可选择一个或多个插件。共享 pnpm 缓存只会回收未被项目使用的内容，不会删除其他项目的 node_modules，但其他项目下次安装可能需要重新下载。"
+        alert.accessoryView = selectionView
+        alert.addButton(withTitle: "清理")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let selected = selectionView.selectedEntries
+        guard !selected.isEmpty else {
+            presentInfoAlert(title: "未选择缓存", message: "请至少选择一项缓存后再清理。")
+            return
+        }
+        Task { await clearPluginCaches(selected) }
     }
 
     func checkForUpdates() {
@@ -438,6 +467,30 @@ final class LauncherModel: ObservableObject {
         return false
     }
 
+    private func clearPluginCaches(_ entries: [PluginCacheEntry]) async {
+        guard beginExclusiveOperation() else { return }
+        defer { endExclusiveOperation() }
+
+        let wasRunning = processController.isRunning
+        phase = .busy("正在清理插件缓存")
+        if wasRunning {
+            await processController.stop()
+        }
+
+        let installation = try? locator.locate()
+        let report = await pluginCacheService.cleanup(
+            entries: entries,
+            paths: paths,
+            installation: installation
+        )
+        if wasRunning {
+            await start()
+        } else {
+            phase = .stopped
+        }
+        presentInfoAlert(title: "插件缓存清理完成", message: report.summary)
+    }
+
     func exportDiagnostics() {
         let text = SensitiveDataRedactor.redact("""
         DeepSeek Harness
@@ -465,6 +518,7 @@ final class LauncherModel: ObservableObject {
         dependencyPlan: PluginDependencyPlan,
         additionalToolRequirements: [ToolchainRequirement] = [],
         allowedBuildScripts: [String] = [],
+        cleanupPluginsAfterRemoval: [HarnessPlugin] = [],
         restartAfterMutation: Bool? = nil,
         attemptDependencyRecovery: Bool = true,
         attemptBuildScriptApproval: Bool = true,
@@ -497,6 +551,15 @@ final class LauncherModel: ObservableObject {
                 dependencyPlan: dependencyPlan,
                 allowedBuildScripts: allowedBuildScripts
             )
+            var cleanupSummary: String?
+            if !cleanupPluginsAfterRemoval.isEmpty {
+                let cleanup = await pluginCacheService.cleanupAfterUninstall(
+                    pluginIDs: cleanupPluginsAfterRemoval.map(\.id),
+                    paths: paths,
+                    installation: installation
+                )
+                cleanupSummary = cleanup.summary
+            }
             plugins = profileManager.refresh()
             if wasRunning {
                 await start()
@@ -514,7 +577,11 @@ final class LauncherModel: ObservableObject {
             }
             lastError = nil
             AppLogger.plugins.info("Plugin \(userOperation, privacy: .public) succeeded")
-            presentInfoAlert(title: "插件\(userOperation)完成", message: "DeepSeek Harness 的 web profile 配置已更新。")
+            let completionText = "DeepSeek Harness 的 web profile 配置已更新。"
+            presentInfoAlert(
+                title: "插件\(userOperation)完成",
+                message: cleanupSummary.map { completionText + " 清理结果：" + $0 } ?? completionText
+            )
         } catch {
             let message = error.localizedDescription
             if attemptBuildScriptApproval,
@@ -542,6 +609,7 @@ final class LauncherModel: ObservableObject {
                         dependencyPlan: retryPlan,
                         additionalToolRequirements: additionalToolRequirements,
                         allowedBuildScripts: packages,
+                        cleanupPluginsAfterRemoval: cleanupPluginsAfterRemoval,
                         restartAfterMutation: wasRunning,
                         attemptDependencyRecovery: true,
                         attemptBuildScriptApproval: false,
@@ -595,6 +663,7 @@ final class LauncherModel: ObservableObject {
                         userOperation: userOperation,
                         dependencyPlan: retryPlan,
                         additionalToolRequirements: additionalToolRequirements + [requirement],
+                        cleanupPluginsAfterRemoval: cleanupPluginsAfterRemoval,
                         restartAfterMutation: wasRunning,
                         attemptDependencyRecovery: false,
                         holdsExclusiveLock: true
@@ -1077,7 +1146,10 @@ final class LauncherModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "确认\(operation) Harness 插件？"
         let dependencyText = dependencyPlan.map { "\n\n\($0.confirmationText)" } ?? ""
-        alert.informativeText = "目标：\(spec)\n\n应用会把当前 web profile 复制到临时目录，执行官方 dsh plugin 命令或配置补丁，并执行候选启动预检。插件可能包含本地代码和生命周期/构建脚本；请确认来源可信。\(dependencyText)"
+        let cleanupText = operation == "卸载"
+            ? "\n\n卸载完成后会清理 App 可确定归属的插件缓存，并回收当前用户 pnpm 中未被使用的共享缓存（其他项目下次安装可能需要重新下载）。"
+            : ""
+        alert.informativeText = "目标：\(spec)\n\n应用会把当前 web profile 复制到临时目录，执行官方 dsh plugin 命令或配置补丁，并执行候选启动预检。插件可能包含本地代码和生命周期/构建脚本；请确认来源可信。\(dependencyText)\(cleanupText)"
         alert.alertStyle = .warning
         alert.addButton(withTitle: "继续")
         alert.addButton(withTitle: "取消")

@@ -237,7 +237,7 @@ flowchart LR
 - 使用 App 提供且版本固定的 Node 可执行文件。
 - 执行 `dsh --profile web --host 127.0.0.1 --port 0`。
 - `DSH_HOME` 指向 App 当前数据 slot，不使用全局 `~/.dsh`。
-- 不继承会改变运行结果的任意用户 Node/pnpm 环境。
+- 优先使用 Runtime 自带 Node/pnpm；仅在插件依赖需要时按兼容回退规则使用用户已有 pnpm，不覆盖用户 PATH 或 Shell 配置。
 - Supervisor 仅在解析到 readiness URL 且健康检查通过后加载专用窗口中的 WKWebView。
 - readiness 超时、进程提前退出或端口不可达时显示最小原生恢复页。
 
@@ -274,7 +274,7 @@ App 不提供独立业务 Settings 窗口。少量 Launcher 偏好，如更新�
 - 正常状态下，右上角显示用户提供的折扣图标、折扣倍率和余额。
 - 折扣时间固定按北京时间（`Asia/Shanghai`）计算：周一至周五 09:00–12:00、14:00–18:00 为高峰时段，显示灰色 `折扣 1.0x`；其余时间为闲时，显示绿色 `折扣 0.5x`。界面至少每 30 秒重新计算一次，不触发 Harness Web UI 刷新。
 - 检测到来自受控 HTTPS feed、且 artifact SHA-256/架构/路径检查通过的新 Runtime 时，右上角显示小圆形下载图标；官方版本号和运行状态仍不显示，折扣和余额入口保持可见。用户点击后下载并校验 artifact，确认后优雅停止、执行候选 Runtime 启动检查并原子切换；不能覆盖运行中的 Runtime。
-- DeepSeek API Key 通过 `DeepSeek → Change DeepSeek API Key…` 菜单配置；Key 只保存到 macOS Keychain 和 Harness 标准凭据文件，不进入 WKWebView、Harness 页面、日志、诊断包或更新 manifest。
+- DeepSeek API Key 通过 `设置 → 更换 DeepSeek API 密钥…` 菜单配置；Key 只保存到 macOS Keychain 和 Harness 标准凭据文件，不进入 WKWebView、Harness 页面、日志、诊断包或更新 manifest。
 - 余额请求使用 DeepSeek 官方 `GET https://api.deepseek.com/user/balance`，通过 `Authorization: Bearer <TOKEN>` 查询 `balance_infos`；配置完成后立即查询一次，随后每 60 秒最多查询一次。余额查询错误只更新内部状态，不影响 Harness 会话和任务。
 - API Key 对话框提供“充值”按钮，打开 DeepSeek 官方充值页面；余额在顶栏显示，不提供手动刷新按钮。
 
@@ -322,7 +322,7 @@ App 不提供独立业务 Settings 窗口。少量 Launcher 偏好，如更新�
 
 - 唯一安装语义为上游 `dsh plugin --profile web add <plugin-spec>`。
 - 卸载使用官方 `remove` 子命令；插件版本升级不属于 Launcher UI 的承诺范围。
-- 使用 Runtime 随附且锁定版本的 pnpm，不依赖系统全局 pnpm。
+- 优先使用 Runtime 随附且锁定版本的 pnpm；为兼容用户已有插件环境，保留用户 pnpm 作为子进程回退，不修改其全局配置。
 - 支持范围与上游 pnpm spec 保持一致，包括 registry package、git、tarball 和本地 `file:`/`link:` 路径。
 - Launcher 以参数数组调用命令，禁止拼接 shell 字符串。
 - App 不定义额外 plugin manifest，也不改写第三方包的 `dsh` 字段。
@@ -368,6 +368,14 @@ Harness 内的只读插件清单继续用于查看最终加载结果。Launcher 
 - registry/git/tarball/本地路径均视为不可信供应链输入。
 - “安装预检通过”只代表兼容，不代表插件安全。
 
+#### PLG-008 默认捆绑 dsh1024
+
+- Runtime 发布包内置一个经过构建时锁定的默认 `web` profile，当前包含 `dsh1024@0.5.0`。
+- 首次启动时，若 App 私有 `DSH_HOME` 尚不存在 web profile，Launcher 将复制该默认 profile；复制完成后按标准 Harness profile 运行，不引入私有插件协议。
+- 已存在的用户 profile 永远不被默认模板覆盖。用户通过标准卸载命令移除 `dsh1024` 后，重启不会静默装回。
+- 默认 profile 随 Runtime 构建生成，不在用户机器上修改全局 Node、pnpm、Shell 或包目录；后续版本升级通过新的 App/Runtime 构建更新默认模板。
+- `dsh1024` 的 Host、bundle patch 和 web client 注入仍由 Harness 原生插件机制加载；Launcher 只负责首次 profile 种子和专用窗口的已声明嵌入源。
+
 ### 6.4 已安装插件的通用菜单管理
 
 #### PLM-001 零专用集成
@@ -383,15 +391,16 @@ Harness 内的只读插件清单继续用于查看最终加载结果。Launcher 
 macOS 顶部应用菜单动态使用以下结构，不在 Harness UI 中新增页面：
 
 ```text
-Plugins
-  Install Plugin…
-  Stop Plugin…
-  Remove Plugin…
-  Installed Plugins
+  插件
+  安装插件…
+  停用插件…
+  卸载插件…
+  清理插件缓存…
+  已安装插件
     dsh-llm-codex
-      Status: Stopped | Starting | Running | Stopping | Error
-      Resume Plugin
-      Stop Plugin
+      状态：已停用 | 启动中 | 运行中 | 停止中 | 错误
+      启用插件
+      停用插件
 ```
 
 - `Installed Plugins` 只列出实际 `dsh.profile.bundles` 中的顶层 bundle，不把传递依赖误显示成可独立启停的插件。
@@ -407,8 +416,10 @@ Plugins
 - 安装输入框接受用户复制的标准安装命令；Launcher 只允许 `plugin --profile web add`，拒绝 shell 操作符和 pnpm 任意选项。
 - 卸载和停用打开当前实际插件列表，支持单选、多选和全选；用户确认后一次性执行对应操作。
 - 卸载执行官方 `dsh plugin --profile web remove <name...>`，保留 Harness 会话和其他用户数据。
+- 卸载完成后清理 App 可确定归属的插件缓存，并在用户确认范围内执行 `pnpm store prune` 回收共享 pnpm 缓存；不盲删其他应用的配置目录。
 - 停用不删除依赖、不修改插件源码，只生成官方支持的 patch overlay，将所选 bundle patch row 标记为 `disabled: true`，然后重启 Harness。
 - 如果某个插件没有可识别的 bundle patch row，Launcher 不提供停用操作并提示用户；不尝试猜测或编辑第三方包。
+- “清理插件缓存”显示各插件可识别的 App 缓存大小，并提供共享 pnpm 缓存和安装暂存缓存的单独条目，支持单选、多选和全选。
 
 #### PLM-004 Stop Plugin
 

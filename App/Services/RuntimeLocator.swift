@@ -5,6 +5,45 @@ struct RuntimeInstallation {
     let root: URL
     let version: String?
     let nodeExecutable: URL?
+
+    /// Builds the process invocation for this installation.
+    ///
+    /// pnpm may expose `dsh` as either a JavaScript entry point (which must
+    /// be passed to Node) or a POSIX shell shim (which must be executed by
+    /// its shebang). Treating the latter as a JavaScript file makes Node
+    /// parse shell syntax and fail before Harness starts.
+    func command(arguments: [String]) -> RuntimeCommand {
+        guard let nodeExecutable, shouldLaunchThroughNode else {
+            return RuntimeCommand(executable: executable, arguments: arguments)
+        }
+        return RuntimeCommand(
+            executable: nodeExecutable,
+            arguments: [executable.path] + arguments
+        )
+    }
+
+    private var shouldLaunchThroughNode: Bool {
+        guard nodeExecutable != nil else { return false }
+        guard let data = try? Data(contentsOf: executable),
+              let source = String(data: data.prefix(256), encoding: .utf8),
+              let firstLine = source.split(whereSeparator: \.isNewline).first else {
+            // Preserve the historical behavior for an unreadable or binary
+            // entry point: a bundled Node runtime is still the safest known
+            // interpreter for a dsh JavaScript entry point.
+            return true
+        }
+
+        let line = String(firstLine).lowercased()
+        if line.hasPrefix("#!") {
+            return line.contains("node")
+        }
+        return true
+    }
+}
+
+struct RuntimeCommand {
+    let executable: URL
+    let arguments: [String]
 }
 
 enum RuntimeLocatorError: LocalizedError {

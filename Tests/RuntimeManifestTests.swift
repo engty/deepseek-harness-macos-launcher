@@ -301,6 +301,74 @@ struct RuntimeManifestTests {
         ]).locate()
         #expect(installation.executable.path == dsh.path)
         #expect(installation.nodeExecutable?.path == node.path)
+
+        let command = installation.command(arguments: ["--version"])
+        #expect(command.executable.path == dsh.path)
+        #expect(command.arguments == ["--version"])
+    }
+
+    @Test
+    func launchesJavaScriptEntryPointThroughBundledNode() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let dsh = root.appendingPathComponent("bin/dsh")
+        let node = root.appendingPathComponent("node/bin/node")
+        try fileManager.createDirectory(at: dsh.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: node.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("#!/usr/bin/env node\nconsole.log('ok')\n".utf8).write(to: dsh)
+        try Data("#!/bin/sh\n".utf8).write(to: node)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dsh.path)
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: node.path)
+
+        let installation = try RuntimeLocator(environment: [
+            "HARNESS_RUNTIME_ROOT": root.path,
+            "PATH": ""
+        ]).locate()
+        let command = installation.command(arguments: ["--version"])
+        #expect(command.executable.path == node.path)
+        #expect(command.arguments == [dsh.path, "--version"])
+    }
+
+    @Test
+    @MainActor
+    func allowsOnlyHTTPSOriginsForEmbeddedPluginStore() {
+        #expect(HarnessWebView.isAllowedEmbeddedPluginOrigin(URL(string: "https://deepseek1024.com/embed/store")!))
+        #expect(!HarnessWebView.isAllowedEmbeddedPluginOrigin(URL(string: "http://deepseek1024.com/embed/store")!))
+        #expect(!HarnessWebView.isAllowedEmbeddedPluginOrigin(URL(string: "https://cdn.deepseek1024.com/store.js")!))
+        #expect(!HarnessWebView.isAllowedEmbeddedPluginOrigin(URL(string: "https://example.com/embed/store")!))
+    }
+
+    @Test
+    func seedsBundledDefaultProfileOnlyWhenProfileIsMissing() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        let bundledProfile = runtimeRoot
+            .appendingPathComponent("default-profile/profiles/web", isDirectory: true)
+        try fileManager.createDirectory(at: bundledProfile, withIntermediateDirectories: true)
+        try Data(#"{"name":"dsh-profile-web","dependencies":{"dsh1024":"0.5.0"}}"#.utf8)
+            .write(to: bundledProfile.appendingPathComponent("package.json"))
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.seedIfNeeded(paths: paths, runtimeRoot: runtimeRoot))
+        #expect(fileManager.fileExists(atPath: paths.profileWeb.appendingPathComponent("package.json").path))
+
+        try Data(#"{"name":"user-profile","dependencies":{}}"#.utf8)
+            .write(to: paths.profileWeb.appendingPathComponent("package.json"))
+        #expect(try !installer.seedIfNeeded(paths: paths, runtimeRoot: runtimeRoot))
+        let preserved = try Data(contentsOf: paths.profileWeb.appendingPathComponent("package.json"))
+        #expect(String(decoding: preserved, as: UTF8.self).contains("user-profile"))
     }
 
     @Test

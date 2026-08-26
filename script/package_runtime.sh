@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ROOT="${1:-${HARNESS_RUNTIME_SOURCE:-}}"
 NODE_PATH="${HARNESS_NODE_PATH:-$(command -v node || true)}"
 DESTINATION="$ROOT_DIR/Resources/runtime"
+DEFAULT_PLUGIN_SPEC="${HARNESS_DEFAULT_PLUGIN_SPEC:-dsh1024@0.5.0}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2
@@ -61,6 +62,32 @@ else
 fi
 cp "$NODE_PATH" "$STAGING_ROOT/runtime/node/bin/node"
 chmod +x "$STAGING_ROOT/runtime/node/bin/node"
+
+# Ship a small, private first-run profile so a fresh App installation already
+# contains the supported default plugin. This profile is copied into the
+# user's App-owned DSH_HOME only when no profile exists; existing profiles and
+# explicit plugin removal are never overwritten.
+DEFAULT_PROFILE_HOME="$STAGING_ROOT/runtime/default-profile"
+DEFAULT_RUNTIME_PATH="$STAGING_ROOT/runtime/node/bin:$STAGING_ROOT/runtime/node_modules/.bin:/usr/bin:/bin"
+mkdir -p "$DEFAULT_PROFILE_HOME"
+PATH="$DEFAULT_RUNTIME_PATH" \
+  DSH_HOME="$DEFAULT_PROFILE_HOME" \
+  "$STAGING_ROOT/runtime/node_modules/.bin/dsh" --profile web --dump-config >/dev/null
+PATH="$DEFAULT_RUNTIME_PATH" \
+  DSH_HOME="$DEFAULT_PROFILE_HOME" \
+  "$STAGING_ROOT/runtime/node_modules/.bin/dsh" plugin --profile web add "$DEFAULT_PLUGIN_SPEC"
+[[ -f "$DEFAULT_PROFILE_HOME/profiles/web/package.json" ]] || {
+  echo "默认插件 profile 未生成 package.json。" >&2
+  exit 1
+}
+# Harness creates this shared directory with absolute links to the temporary
+# staging Runtime. It is intentionally regenerated on the user's first start,
+# where the links can point at the final bundled Runtime path; shipping the
+# staging links would leave a broken profile and make bundle signing fail.
+if [[ -d "$DEFAULT_PROFILE_HOME/profiles/node_modules" ]]; then
+  rm -rf "$DEFAULT_PROFILE_HOME/profiles/node_modules"
+fi
+echo "默认插件 profile 已生成：$DEFAULT_PLUGIN_SPEC"
 
 # The bundled Node must actually run before it can be shipped.
 NODE_VERSION_OUTPUT="$("$STAGING_ROOT/runtime/node/bin/node" --version 2>&1)" || {

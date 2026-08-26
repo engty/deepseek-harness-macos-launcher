@@ -7,6 +7,12 @@ struct HarnessWebView: NSViewRepresentable {
     let url: URL
     let onLoadError: (String) -> Void
 
+    // dsh1024 provides its store as a remote iframe inside the local Harness
+    // page. Keep the main document locked to the local runtime, but allow the
+    // plugin's declared store origin in a subframe so the App window can host
+    // the plugin UI without handing it off to a browser.
+    private static let embeddedPluginOriginHosts = ["deepseek1024.com"]
+
     func makeCoordinator() -> Coordinator {
         Coordinator(allowedOrigin: url, onLoadError: onLoadError)
     }
@@ -42,6 +48,12 @@ struct HarnessWebView: NSViewRepresentable {
             && effectivePort(for: lhs) == effectivePort(for: rhs)
     }
 
+    static func isAllowedEmbeddedPluginOrigin(_ url: URL) -> Bool {
+        guard url.scheme?.lowercased() == "https",
+              let host = url.host?.lowercased() else { return false }
+        return embeddedPluginOriginHosts.contains(host)
+    }
+
     private static func effectivePort(for url: URL) -> Int? {
         if let port = url.port { return port }
         switch url.scheme?.lowercased() {
@@ -72,6 +84,12 @@ struct HarnessWebView: NSViewRepresentable {
             }
 
             if HarnessWebView.sharesOrigin(targetURL, allowedOrigin) {
+                decisionHandler(.allow)
+            } else if navigationAction.targetFrame?.isMainFrame == false,
+                      HarnessWebView.isAllowedEmbeddedPluginOrigin(targetURL) {
+                // Only a non-main-frame navigation may use this allowlist.
+                // A remote top-level navigation still follows the existing
+                // external-link policy below.
                 decisionHandler(.allow)
             } else if targetURL.scheme?.lowercased() == "https",
                       navigationAction.navigationType == .linkActivated {

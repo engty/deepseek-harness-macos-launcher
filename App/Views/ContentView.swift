@@ -17,8 +17,18 @@ struct ContentView: View {
         }
         .frame(minWidth: 980, minHeight: 680)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                statusSummary
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    statusSummary
+                }
+                // The status/余额 controls are intentionally transparent
+                // toolbar content. Do not let macOS add a shared glass
+                // capsule around them.
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    statusSummary
+                }
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
@@ -98,6 +108,7 @@ struct ContentView: View {
 
 private struct DiscountIndicator: View {
     @State private var now = Date()
+    @State private var isShowingSchedule = false
     private let icon: NSImage?
 
     init() {
@@ -117,25 +128,58 @@ private struct DiscountIndicator: View {
     }
 
     var body: some View {
-        HStack(spacing: 5) {
-            if let icon {
-                Image(nsImage: icon)
-                    .renderingMode(.template)
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 18, height: 18)
-                    .foregroundStyle(tint)
-            } else {
-                Image(systemName: "percent")
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(tint)
-            }
+        Button {
+            isShowingSchedule.toggle()
+        } label: {
+            HStack(spacing: 5) {
+                if let icon {
+                    Image(nsImage: icon)
+                        .renderingMode(.template)
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 18, height: 18)
+                        .foregroundStyle(tint)
+                } else {
+                    Image(systemName: "percent")
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(tint)
+                }
 
-            Text("折扣 \(period.multiplierText)")
+                Text("折扣 \(period.multiplierText)")
+            }
         }
+        .buttonStyle(.plain)
         .font(.caption)
         .foregroundStyle(tint)
         .accessibilityLabel("折扣 \(period.multiplierText)")
+        .help("查看折扣时段")
+        .popover(
+            isPresented: $isShowingSchedule,
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .top
+        ) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("折扣时段说明")
+                    .font(.headline)
+
+                Text("北京时间（UTC+8）")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                Text("非折扣时段")
+                    .font(.subheadline.weight(.semibold))
+                Text("周一至周五 09:00–12:00、14:00–18:00")
+                    .font(.callout)
+
+                Text("其余时间为折扣时段，价格为高峰时段的一半。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 270, alignment: .leading)
+            .padding(14)
+        }
         .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { date in
             now = date
         }

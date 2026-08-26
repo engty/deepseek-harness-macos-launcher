@@ -71,13 +71,9 @@ final class HarnessProcessController {
             "--host", "127.0.0.1",
             "--port", "0"
         ]
-        if let nodeExecutable = installation.nodeExecutable {
-            process.executableURL = nodeExecutable
-            process.arguments = [installation.executable.path] + dshArguments
-        } else {
-            process.executableURL = installation.executable
-            process.arguments = dshArguments
-        }
+        let command = installation.command(arguments: dshArguments)
+        process.executableURL = command.executable
+        process.arguments = command.arguments
         process.currentDirectoryURL = currentDirectoryOverride ?? paths.activeDataSlot
         process.standardOutput = outputPipe
         process.standardError = errorPipe
