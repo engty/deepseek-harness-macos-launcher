@@ -17,15 +17,8 @@ struct ContentView: View {
         }
         .frame(minWidth: 980, minHeight: 680)
         .toolbar {
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .primaryAction) {
-                    statusSummary
-                }
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .primaryAction) {
-                    statusSummary
-                }
+            ToolbarItem(placement: .primaryAction) {
+                statusSummary
             }
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
