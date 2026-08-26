@@ -66,9 +66,17 @@ jobs:
           set -euo pipefail
           runtime_source="$RUNNER_TEMP/harness-runtime"
           mkdir -p "$runtime_source"
+          # Bootstrap only the pinned package manager with npm. Resolving the
+          # full Harness graph through npm can exceed the runner's heap; pnpm
+          # performs the same install with substantially lower peak memory.
           npm install --prefix "$runtime_source" --ignore-scripts --no-audit --no-fund \
-            "@deepseek-ai/dsh@${HARNESS_VERSION}" \
             "pnpm@${PNPM_VERSION}"
+          "$runtime_source/node_modules/.bin/pnpm" \
+            --dir "$runtime_source" \
+            add \
+            --ignore-scripts \
+            --lockfile=false \
+            "@deepseek-ai/dsh@${HARNESS_VERSION}"
           HARNESS_RUNTIME_SOURCE="$runtime_source" \
             HARNESS_NODE_PATH="$(command -v node)" \
             ./script/package_runtime.sh
