@@ -268,17 +268,15 @@ flowchart LR
 
 App 不提供独立业务 Settings 窗口。少量 Launcher 偏好，如更新通道和自动检查，可使用原生小型偏好面板或菜单项；Harness 业务设置仍在同一个 App 窗口中打开 Harness 原生设置页。
 
-#### APP-006 顶栏运行状态、版本与余额
+#### APP-006 顶栏折扣与 Runtime 更新提示
 
-- 顶栏不显示笼统的 “Harness Runtime” 状态标题，只显示一个运行指示灯、Harness 版本和必要操作。
-- 绿色圆点表示 Harness sidecar 已就绪并正在运行；红色圆点表示未启动、已停止或启动失败。
-- 圆点后显示当前 Runtime 中 `@deepseek-ai/dsh` 的版本号；无法读取版本时显示 `Harness`，不得阻塞启动。
-- 检测到来自受控 HTTPS feed、且 artifact SHA-256/架构/路径检查通过的新 Runtime 时，在版本号右侧显示小圆形下载图标。用户点击后下载并校验 artifact，确认后优雅停止、执行候选 Runtime 启动检查并原子切换；不能覆盖运行中的 Runtime。
-- 顶栏提供 DeepSeek 余额入口。用户首次点击时输入 API Key；Key 只保存到 macOS Keychain，不进入 WKWebView、Harness 页面、日志、诊断包或更新 manifest。
-- 余额请求使用 DeepSeek 官方 `GET https://api.deepseek.com/user/balance`，通过 `Authorization: Bearer <TOKEN>` 查询 `balance_infos`，不读取或修改 Harness 的 Provider 配置。
-- 配置完成后立即查询一次，随后每 60 秒最多查询一次；网络错误只更新余额状态，不影响 Harness 会话和任务。
-- 配置完成后余额区域只读展示，不提供手动刷新按钮；API Key 重新配置通过独立设置入口完成。
-- 为保证 ad-hoc 受控分发的启动不被 Keychain 授权弹窗阻塞，Launcher 启动阶段不主动读取旧 Keychain 条目；用户可通过余额入口显式重新配置并开启当前会话的轮询。
+- 顶栏不显示 Harness Runtime 状态标题、运行圆点或官方版本号；右上角保留余额数值入口。
+- 正常状态下，右上角显示用户提供的折扣图标、折扣倍率和余额。
+- 折扣时间固定按北京时间（`Asia/Shanghai`）计算：周一至周五 09:00–12:00、14:00–18:00 为高峰时段，显示灰色 `折扣 1.0x`；其余时间为闲时，显示绿色 `折扣 0.5x`。界面至少每 30 秒重新计算一次，不触发 Harness Web UI 刷新。
+- 检测到来自受控 HTTPS feed、且 artifact SHA-256/架构/路径检查通过的新 Runtime 时，右上角显示小圆形下载图标；官方版本号和运行状态仍不显示，折扣和余额入口保持可见。用户点击后下载并校验 artifact，确认后优雅停止、执行候选 Runtime 启动检查并原子切换；不能覆盖运行中的 Runtime。
+- DeepSeek API Key 通过 `DeepSeek → Change DeepSeek API Key…` 菜单配置；Key 只保存到 macOS Keychain 和 Harness 标准凭据文件，不进入 WKWebView、Harness 页面、日志、诊断包或更新 manifest。
+- 余额请求使用 DeepSeek 官方 `GET https://api.deepseek.com/user/balance`，通过 `Authorization: Bearer <TOKEN>` 查询 `balance_infos`；配置完成后立即查询一次，随后每 60 秒最多查询一次。余额查询错误只更新内部状态，不影响 Harness 会话和任务。
+- API Key 对话框提供“充值”按钮，打开 DeepSeek 官方充值页面；余额在顶栏显示，不提供手动刷新按钮。
 
 ### 6.2 Harness UI 承载
 

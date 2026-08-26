@@ -1,3 +1,5 @@
+import AppKit
+import Combine
 import SwiftUI
 
 struct ContentView: View {
@@ -15,78 +17,76 @@ struct ContentView: View {
         }
         .frame(minWidth: 980, minHeight: 680)
         .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                HStack(spacing: 12) {
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(model.phase.isReady ? Color.green : Color.red)
-                            .frame(width: 8, height: 8)
-                        Text(model.runtimeVersion.map { "DeepSeek Harness \($0)" } ?? "DeepSeek Harness")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .layoutPriority(1)
-                    }
-
-                    Divider()
-                        .frame(height: 15)
-
-                    if model.isBalanceConfigured {
-                        Button {
-                            model.configureDeepSeekBalance(forcePrompt: true)
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "creditcard")
-                                    .foregroundStyle(.secondary)
-                                if let amount = model.balanceAmountDisplayText {
-                                    Text("余额")
-                                    Text(amount)
-                                        .foregroundStyle(balanceColor)
-                                } else {
-                                    Text(model.balanceDisplayText)
-                                }
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help("点击更换 DeepSeek API Key")
-                    } else {
-                        Button {
-                            model.configureDeepSeekBalance()
-                        } label: {
-                            HStack(spacing: 5) {
-                                Image(systemName: "creditcard")
-                                Text(model.balanceDisplayText)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .help("配置 DeepSeek API Key")
-                    }
-
-                    if model.hasAvailableRuntimeUpdate {
-                        Divider()
-                            .frame(height: 15)
-                        Button {
-                            model.downloadLatestUpdate()
-                        } label: {
-                            Image(systemName: "arrow.down.circle")
-                                .font(.system(size: 14, weight: .medium))
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(model.isOperationInProgress)
-                        .help("下载 DeepSeek Harness 更新")
-                    }
+            if #available(macOS 26.0, *) {
+                ToolbarItem(placement: .primaryAction) {
+                    statusSummary
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 6)
-                .fixedSize(horizontal: true, vertical: false)
+                .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem(placement: .primaryAction) {
+                    statusSummary
+                }
             }
         }
+        .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
             await model.startIfNeeded()
         }
+    }
+
+    private var statusSummary: some View {
+        HStack(spacing: 12) {
+            DiscountIndicator()
+
+            if model.isBalanceConfigured {
+                Button {
+                    model.configureDeepSeekBalance(forcePrompt: true)
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "creditcard")
+                            .foregroundStyle(.secondary)
+                        if let amount = model.balanceAmountDisplayText {
+                            Text("余额")
+                            Text(amount)
+                                .foregroundStyle(balanceColor)
+                        } else {
+                            Text(model.balanceDisplayText)
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("点击更换 DeepSeek API Key")
+            } else {
+                Button {
+                    model.configureDeepSeekBalance()
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "creditcard")
+                        Text(model.balanceDisplayText)
+                    }
+                }
+                .buttonStyle(.plain)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .help("配置 DeepSeek API Key")
+            }
+
+            if model.hasAvailableRuntimeUpdate {
+                Button {
+                    model.downloadLatestUpdate()
+                } label: {
+                    Image(systemName: "arrow.down.circle")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .disabled(model.isOperationInProgress)
+                .help("下载 DeepSeek Harness 更新")
+            }
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, 16)
     }
 
     private var balanceColor: Color {
@@ -99,6 +99,52 @@ struct ContentView: View {
             return .red
         case .unknown:
             return .secondary
+        }
+    }
+}
+
+private struct DiscountIndicator: View {
+    @State private var now = Date()
+    private let icon: NSImage?
+
+    init() {
+        if let url = Bundle.main.url(forResource: "DiscountIcon", withExtension: "svg") {
+            icon = NSImage(contentsOf: url)
+        } else {
+            icon = nil
+        }
+    }
+
+    private var period: DeepSeekDiscountPeriod {
+        DeepSeekDiscountPeriod.current(at: now)
+    }
+
+    private var tint: Color {
+        period == .peak ? .secondary : .green
+    }
+
+    var body: some View {
+        HStack(spacing: 5) {
+            if let icon {
+                Image(nsImage: icon)
+                    .renderingMode(.template)
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 18, height: 18)
+                    .foregroundStyle(tint)
+            } else {
+                Image(systemName: "percent")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(tint)
+            }
+
+            Text("折扣 \(period.multiplierText)")
+        }
+        .font(.caption)
+        .foregroundStyle(tint)
+        .accessibilityLabel("折扣 \(period.multiplierText)")
+        .onReceive(Timer.publish(every: 30, on: .main, in: .common).autoconnect()) { date in
+            now = date
         }
     }
 }

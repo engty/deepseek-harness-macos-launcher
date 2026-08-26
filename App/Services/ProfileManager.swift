@@ -48,17 +48,24 @@ final class ProfileManager {
 
         return pluginNames.compactMap { packageName in
             guard let packageManifest = packageManifest(named: packageName) else { return nil }
-            guard let patchPath = nestedString(packageManifest, path: ["dsh", "bundle", "patch"]) else { return nil }
             let packageURL = packageDirectory(named: packageName)
-            let patchURL = packageURL.appendingPathComponent(patchPath).resolvingSymlinksInPath()
-            let rows = Self.patchRowIDs(at: patchURL, fileManager: fileManager)
-            guard !rows.isEmpty else { return nil }
+            let rows: [String]
+            if let patchPath = nestedString(packageManifest, path: ["dsh", "bundle", "patch"]) {
+                let patchURL = packageURL.appendingPathComponent(patchPath).resolvingSymlinksInPath()
+                rows = Self.patchRowIDs(at: patchURL, fileManager: fileManager)
+            } else {
+                // Not every valid Harness plugin contributes a Cordis bundle
+                // patch. It still belongs in the installed-plugin list so the
+                // user can remove it through the standard `dsh plugin remove`
+                // command. Such a plugin cannot be disabled by this launcher.
+                rows = []
+            }
             let version = packageManifest["version"] as? String ?? "unknown"
             return HarnessPlugin(
                 id: packageName,
                 version: version,
                 bundleRowIDs: rows,
-                isDisabled: rows.allSatisfy(disabledRows.contains)
+                isDisabled: !rows.isEmpty && rows.allSatisfy(disabledRows.contains)
             )
         }
     }

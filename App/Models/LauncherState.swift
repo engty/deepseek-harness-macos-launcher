@@ -48,6 +48,40 @@ enum RuntimeUpdateState: Equatable {
     case failed(String)
 }
 
+enum DeepSeekDiscountPeriod: Equatable {
+    case peak
+    case offPeak
+
+    var multiplierText: String {
+        switch self {
+        case .peak:
+            return "1.0x"
+        case .offPeak:
+            return "0.5x"
+        }
+    }
+
+    /// DeepSeek's discount schedule is defined in Beijing time (UTC+8),
+    /// independent of the Mac's local timezone.
+    static func current(at date: Date = Date()) -> Self {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+
+        let weekday = calendar.component(.weekday, from: date)
+        guard (2...6).contains(weekday) else { return .offPeak }
+
+        let hour = calendar.component(.hour, from: date)
+        let minute = calendar.component(.minute, from: date)
+        let minutesSinceMidnight = hour * 60 + minute
+
+        if (9 * 60..<12 * 60).contains(minutesSinceMidnight)
+            || (14 * 60..<18 * 60).contains(minutesSinceMidnight) {
+            return .peak
+        }
+        return .offPeak
+    }
+}
+
 enum AppUpdateState: Equatable {
     case idle
     case checking
@@ -149,5 +183,6 @@ struct HarnessPlugin: Identifiable, Equatable {
     let isDisabled: Bool
 
     var name: String { id }
+    var canBeDisabled: Bool { !bundleRowIDs.isEmpty }
     var state: PluginRuntimeState { isDisabled ? .stopped : .running }
 }

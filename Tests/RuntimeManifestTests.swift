@@ -159,6 +159,25 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func discountScheduleUsesBeijingBusinessHours() {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
+
+        func date(hour: Int, minute: Int = 0, day: Int = 24) -> Date {
+            calendar.date(
+                from: DateComponents(year: 2026, month: 8, day: day, hour: hour, minute: minute)
+            )!
+        }
+
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 9)) == .peak)
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 11, minute: 59)) == .peak)
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 12)) == .offPeak)
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 14)) == .peak)
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 18)) == .offPeak)
+        #expect(DeepSeekDiscountPeriod.current(at: date(hour: 10, day: 29)) == .offPeak)
+    }
+
+    @Test
     func decodesDeepSeekBalanceResponse() throws {
         let source = Data(#"{"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"12.50","granted_balance":1.5,"topped_up_balance":"11.00"}]}"#.utf8)
         let response = try JSONDecoder().decode(DeepSeekBalanceResponse.self, from: source)
@@ -483,6 +502,33 @@ exit 1
         try manager.setEnabled(plugin, enabled: true)
         #expect(!fileManager.fileExists(atPath: paths.overlay.path))
         #expect(fileManager.fileExists(atPath: packageDirectory.appendingPathComponent("package.json").path))
+    }
+
+    @Test
+    @MainActor
+    func refreshIncludesInstalledPluginWithoutPatchForRemoval() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let packageDirectory = paths.profileWeb.appendingPathComponent("node_modules/plain-plugin", isDirectory: true)
+        try fileManager.createDirectory(at: packageDirectory, withIntermediateDirectories: true)
+        let profileManifest = #"{"dsh":{"profile":{"bundles":["plain-plugin"]}},"dependencies":{"plain-plugin":"1.0.0"}}"#
+        try Data(profileManifest.utf8).write(to: paths.profileWeb.appendingPathComponent("package.json"))
+        let packageManifest = #"{"name":"plain-plugin","version":"1.0.0"}"#
+        try Data(packageManifest.utf8).write(to: packageDirectory.appendingPathComponent("package.json"))
+
+        let manager = ProfileManager(paths: paths)
+        let plugin = try #require(manager.refresh().first)
+        #expect(plugin.id == "plain-plugin")
+        #expect(plugin.bundleRowIDs.isEmpty)
+        #expect(!plugin.canBeDisabled)
     }
 
     private var currentArchitecture: String {

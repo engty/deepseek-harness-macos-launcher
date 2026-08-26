@@ -17,13 +17,13 @@
 1. **下载**：到本仓库的 [Releases](https://github.com/engty/deepseek-harness-macos-launcher/releases) 页面，下载 `DeepSeek-Harness-v<版本号>-macos-arm64.dmg`（文件名就带着版本，下载后一眼可辨）。
 2. **安装**：打开 DMG，把 `DeepSeek Harness.app` 拖到旁边的 `Applications` 里。
 3. **首次打开**：App 未做官方签名，系统可能提示"无法验证开发者"——右键点 App 选"打开"，或在"系统设置 → 隐私与安全性"里点"仍要打开"即可。
-4. **配置 API Key**：打开 App 后，点击顶栏的"余额"按钮，粘贴你的 DeepSeek API Key。配好后顶栏会显示余额，聊天和余额共用同一个 Key。
+4. **配置 API Key**：打开 App 后，从 `DeepSeek → Change DeepSeek API Key…` 输入你的 DeepSeek API Key。聊天和余额查询共用同一个 Key；余额会继续显示在右上角，对话框中的“充值”按钮会打开官方 `https://platform.deepseek.com/usage` 页面。
 5. **装插件**：菜单栏 `Plugins → Install Plugin…`，粘贴官方安装命令即可，例如：
    ```
    dsh plugin --profile web add dsh-llm-codex
    ```
    装好的插件可以在同一菜单里启动、停用或卸载。
-6. **更新**：App 会静默检查 Harness 更新，有新版时顶栏出现下载按钮，一键升级、失败自动回退；`DeepSeek → Check DeepSeek Harness App Updates…` 检查外壳自身更新。
+6. **更新**：App 会静默检查 Harness 更新，有新版时右上角只显示下载按钮，一键升级、失败自动回退；`DeepSeek → Check DeepSeek Harness App Updates…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
 
 ## 安全性
 

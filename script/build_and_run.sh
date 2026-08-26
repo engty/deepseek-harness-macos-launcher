@@ -17,6 +17,7 @@ APP_RESOURCES="$APP_CONTENTS/Resources"
 APP_BINARY="$APP_MACOS/$APP_NAME"
 INFO_PLIST="$APP_CONTENTS/Info.plist"
 ICON_SOURCE="$ROOT_DIR/Resources/AppIcon.png"
+DISCOUNT_ICON_SOURCE="$ROOT_DIR/Resources/DiscountIcon.svg"
 ICONSET_DIR="$DIST_DIR/DeepSeekHarness.$$.iconset"
 ICON_FILE="$APP_RESOURCES/AppIcon.icns"
 PLUGIN_HELPER_SOURCE="$ROOT_DIR/script/deepseek-harness-plugin"
@@ -66,6 +67,9 @@ if [[ -x "$PLUGIN_HELPER_SOURCE" ]]; then
   mkdir -p "$(dirname "$PLUGIN_HELPER_DESTINATION")"
   cp "$PLUGIN_HELPER_SOURCE" "$PLUGIN_HELPER_DESTINATION"
   chmod +x "$PLUGIN_HELPER_DESTINATION"
+fi
+if [[ -f "$DISCOUNT_ICON_SOURCE" ]]; then
+  cp "$DISCOUNT_ICON_SOURCE" "$APP_RESOURCES/DiscountIcon.svg"
 fi
 
 if [[ -f "$ICON_SOURCE" ]]; then

@@ -33,6 +33,7 @@ final class LauncherModel: ObservableObject {
     private let runtimePreflight: RuntimePreflightService
     private let balanceService: DeepSeekBalanceService
     private let deepSeekCredentialStore = DeepSeekCredentialStore()
+    private let deepSeekRechargeURL = URL(string: "https://platform.deepseek.com/usage")!
     private let balanceKeychain = KeychainStore(
         service: AppPaths.bundleIdentifier + ".credentials.v2",
         account: DeepSeekCredentialStore.reference
@@ -310,7 +311,21 @@ final class LauncherModel: ObservableObject {
     }
 
     func stopPluginPrompt() {
-        let selected = promptForPluginSelection(title: "停用 Harness 插件", operation: "停用")
+        let refresh = profileManager.refresh()
+        plugins = refresh
+        let stoppablePlugins = refresh.filter(\.canBeDisabled)
+        guard !stoppablePlugins.isEmpty else {
+            presentInfoAlert(
+                title: "没有可停用插件",
+                message: "当前已安装插件没有提供 Harness bundle patch，因此只能通过“卸载插件”移除。"
+            )
+            return
+        }
+        let selected = promptForPluginSelection(
+            title: "停用 Harness 插件",
+            operation: "停用",
+            plugins: stoppablePlugins
+        )
         guard !selected.isEmpty else { return }
         let names = selected.map(\.name).joined(separator: ", ")
         guard confirmPluginMutation(operation: "停用", spec: names) else { return }
@@ -1002,14 +1017,18 @@ final class LauncherModel: ObservableObject {
 
     private func promptForPluginSelection(
         title: String,
-        operation: String
+        operation: String,
+        plugins candidates: [HarnessPlugin]? = nil
     ) -> [HarnessPlugin] {
-        guard !plugins.isEmpty else {
+        let currentPlugins = profileManager.refresh()
+        plugins = currentPlugins
+        let availablePlugins = candidates ?? currentPlugins
+        guard !availablePlugins.isEmpty else {
             presentInfoAlert(title: "没有已安装插件", message: "请先通过“插件 > 安装插件…”安装标准 Harness 插件。")
             return []
         }
 
-        let selectionView = PluginSelectionAccessoryView(plugins: plugins)
+        let selectionView = PluginSelectionAccessoryView(plugins: availablePlugins)
         let alert = NSAlert()
         alert.messageText = title
         alert.informativeText = "可单选、多选或点击“全选”。\(operation)不会删除 Harness 会话或其他用户数据。"
@@ -1036,9 +1055,16 @@ final class LauncherModel: ObservableObject {
         field.placeholderString = "sk-…"
         field.frame = NSRect(x: 0, y: 0, width: 360, height: 24)
         alert.accessoryView = field
-        alert.addButton(withTitle: "保存并查询")
+        alert.addButton(withTitle: "更新")
+        alert.addButton(withTitle: "充值")
         alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return nil }
+
+        let response = alert.runModal()
+        if response == .alertSecondButtonReturn {
+            NSWorkspace.shared.open(deepSeekRechargeURL)
+            return nil
+        }
+        guard response == .alertFirstButtonReturn else { return nil }
         let value = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         return value.isEmpty ? nil : value
     }
