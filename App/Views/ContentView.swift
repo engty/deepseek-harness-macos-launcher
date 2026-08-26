@@ -17,6 +17,7 @@ struct ContentView: View {
         }
         .frame(minWidth: 980, minHeight: 680)
         .toolbar {
+#if swift(>=6.2)
             if #available(macOS 26.0, *) {
                 ToolbarItem(placement: .primaryAction) {
                     statusSummary
@@ -30,6 +31,14 @@ struct ContentView: View {
                     statusSummary
                 }
             }
+#else
+            // Older Xcode SDKs do not expose sharedBackgroundVisibility.
+            // Keep the toolbar source-compatible with the macOS 13 baseline;
+            // toolbarBackground below still removes the window toolbar glass.
+            ToolbarItem(placement: .primaryAction) {
+                statusSummary
+            }
+#endif
         }
         .toolbarBackground(.hidden, for: .windowToolbar)
         .task {
