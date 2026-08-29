@@ -16,16 +16,15 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 980, minHeight: 680)
-        // Keep the status controls outside SwiftUI's toolbar item grouping.
-        // macOS can wrap toolbar items in a shared glass capsule even when
-        // that background is marked hidden; an overlay keeps this region
-        // truly borderless while retaining the top-trailing placement.
-        .overlay(alignment: .topTrailing) {
-            statusSummary
-                .padding(.top, 12)
-                .padding(.trailing, 18)
+        // Keep the titlebar status outside SwiftUI's toolbar item grouping.
+        // macOS 26 gives toolbar items a Liquid Glass capsule even when the
+        // item is marked borderless. A native titlebar accessory preserves the
+        // system traffic lights and title while leaving this status region
+        // transparent and independently sized.
+        .background {
+            TitlebarStatusAccessory(content: AnyView(statusSummary))
+                .frame(width: 0, height: 0)
         }
-        .modifier(HiddenWindowToolbar())
         .task {
             await model.startIfNeeded()
         }
@@ -100,13 +99,109 @@ struct ContentView: View {
     }
 }
 
-private struct HiddenWindowToolbar: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(macOS 15.0, *) {
-            content.toolbar(.hidden, for: .windowToolbar)
-        } else {
-            content
+private struct TitlebarStatusAccessory: NSViewRepresentable {
+    let content: AnyView
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(content: content)
+    }
+
+    func makeNSView(context: Context) -> WindowAnchorView {
+        let view = WindowAnchorView()
+        view.onWindowChange = { [weak coordinator = context.coordinator] window in
+            coordinator?.attach(to: window)
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: WindowAnchorView, context: Context) {
+        context.coordinator.update(content)
+        if let window = nsView.window {
+            context.coordinator.attach(to: window)
+        }
+    }
+
+    static func dismantleNSView(_ nsView: WindowAnchorView, coordinator: Coordinator) {
+        coordinator.detach()
+    }
+
+    @MainActor
+    final class Coordinator {
+        private var content: AnyView
+        private weak var window: NSWindow?
+        private weak var hostingView: NSHostingView<AnyView>?
+        private var accessoryController: NSTitlebarAccessoryViewController?
+
+        init(content: AnyView) {
+            self.content = content
+        }
+
+        func update(_ content: AnyView) {
+            self.content = content
+            hostingView?.rootView = content
+            resizeHostingView()
+        }
+
+        func attach(to window: NSWindow) {
+            if self.window === window, accessoryController != nil {
+                return
+            }
+
+            detach()
+
+            let hostingView = NSHostingView(rootView: content)
+            hostingView.setContentHuggingPriority(.required, for: .horizontal)
+            hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
+            hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 30)
+
+            let accessoryController = NSTitlebarAccessoryViewController()
+            accessoryController.layoutAttribute = .right
+            accessoryController.view = hostingView
+            window.addTitlebarAccessoryViewController(accessoryController)
+
+            self.window = window
+            self.hostingView = hostingView
+            self.accessoryController = accessoryController
+
+            // The titlebar accessory is laid out before SwiftUI has measured
+            // the hosted view. Refit once after the first layout so the
+            // accessory remains content-sized without a fixed capsule.
+            DispatchQueue.main.async { [weak self] in
+                self?.resizeHostingView()
+            }
+        }
+
+        private func resizeHostingView() {
+            guard let hostingView else { return }
+            hostingView.layoutSubtreeIfNeeded()
+            let fittingSize = hostingView.fittingSize
+            let width = max(fittingSize.width, 220)
+            let height = max(fittingSize.height, 30)
+            hostingView.setFrameSize(NSSize(width: width, height: height))
+        }
+
+        func detach() {
+            if let accessoryController, let window {
+                if let index = window.titlebarAccessoryViewControllers.firstIndex(where: {
+                    $0 === accessoryController
+                }) {
+                    window.removeTitlebarAccessoryViewController(at: index)
+                }
+            }
+            window = nil
+            hostingView = nil
+            accessoryController = nil
+        }
+    }
+}
+
+private final class WindowAnchorView: NSView {
+    var onWindowChange: ((NSWindow) -> Void)?
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if let window {
+            onWindowChange?(window)
         }
     }
 }
