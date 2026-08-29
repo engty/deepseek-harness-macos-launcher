@@ -23,6 +23,8 @@
    dsh plugin --profile web add dsh-llm-codex
    ```
    App 首次启动时默认已经带有 `dsh1024`（当前锁定 `0.5.0`），它的 1024Store 内容会出现在 Harness 页面侧边栏；装好的插件可以在同一菜单里启动、停用、卸载或清理缓存。插件 profile 保存在 App 私有 DSH_HOME；pnpm 的共享缓存沿用用户环境以兼容更多插件，卸载和“清理插件缓存”会在确认后回收未使用缓存。用户卸载默认插件后不会在重启时自动装回。
+   需要识图时可按官方标准方式安装 `@anionex/dsh-vision-toolkit`：
+   `dsh plugin --profile web add @anionex/dsh-vision-toolkit`。它会在 App 私有目录准备隔离的 Python、Pillow、NumPy 和 vtracer，不写入系统 Python；首次启动视觉插件可能需要几分钟准备依赖，启动器会等待其完成。
 6. **更新**：App 会静默检查 Harness 更新，有新版时右上角只显示下载按钮，一键升级、失败自动回退；`设置 → 检查 DeepSeek Harness 更新…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
 
 ## 安全性

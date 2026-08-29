@@ -27,13 +27,18 @@ enum HarnessProcessError: LocalizedError {
         case .exitedBeforeReady(let output):
             return "Harness 在 UI 就绪前退出。\n\(output)"
         case .readinessTimeout:
-            return "等待 Harness Web UI 就绪超时。"
+            return "等待 Harness Web UI 就绪超时。插件首次启动可能正在准备依赖，请稍后重试；若持续失败可导出诊断。"
         }
     }
 }
 
 @MainActor
 final class HarnessProcessController {
+    /// Plugins may prepare a private runtime before Harness prints its ready
+    /// URL. Keep this longer than the vision toolkit's first-run dependency
+    /// preparation timeout so the launcher does not kill a healthy process.
+    static let defaultReadinessTimeout: TimeInterval = 12 * 60
+
     private(set) var process: Process?
     var onUnexpectedTermination: (@MainActor (String) -> Void)?
     private var outputPipe: Pipe?
@@ -125,7 +130,9 @@ final class HarnessProcessController {
         }
 
         let timeoutTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            try? await Task.sleep(
+                nanoseconds: UInt64(Self.defaultReadinessTimeout * 1_000_000_000)
+            )
             guard !Task.isCancelled, let self, self.launchToken == token else { return }
             self.failReadiness(HarnessProcessError.readinessTimeout)
         }

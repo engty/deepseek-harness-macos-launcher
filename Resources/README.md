@@ -41,6 +41,13 @@ The Runtime Bundle also contains a pinned default web profile with `dsh1024`
 App-owned `$DSH_HOME` only when no user profile exists. Existing profiles are
 left untouched, so removing the default plugin is not undone on restart.
 
+The Launcher also supports standard third-party plugins such as
+`@anionex/dsh-vision-toolkit`. Install it from the App's plugin menu with the
+official `dsh plugin --profile web add ...` command. Its first launch may take
+several minutes while it prepares an isolated Python runtime under the
+App-owned cache; this is expected and does not install Python packages into the
+system environment.
+
 Dependencies that are not shipped in the Runtime are never installed globally.
 The controlled recovery list is stored under the App's private Application
 Support toolchain directory, with one immutable version directory and a

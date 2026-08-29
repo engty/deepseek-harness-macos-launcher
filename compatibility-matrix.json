@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updatedAt": "2026-08-15",
+  "updatedAt": "2026-08-29",
   "shell": {
     "product": "DeepSeek Harness",
     "bundleIdentifier": "com.harness.desktop.launcher",
@@ -12,7 +12,7 @@
     "package": "@deepseek-ai/dsh",
     "version": "0.1.0-rc.6",
     "sourceCommit": "47f943859bef60e4160492346772ded9b24f765a",
-    "nodeVersion": "22.18.0",
+    "nodeVersion": "22.19.0",
     "channel": "preview",
     "artifactRequired": true
   },

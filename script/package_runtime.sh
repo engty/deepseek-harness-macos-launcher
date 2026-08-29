@@ -63,6 +63,25 @@ fi
 cp "$NODE_PATH" "$STAGING_ROOT/runtime/node/bin/node"
 chmod +x "$STAGING_ROOT/runtime/node/bin/node"
 
+# Reject an incompatible Node before resolving the default profile. This
+# avoids spending time on a package install that cannot run the supported
+# plugin set afterward.
+NODE_VERSION_OUTPUT="$("$STAGING_ROOT/runtime/node/bin/node" --version 2>&1)" || {
+  echo "内置 Node 无法运行：$NODE_VERSION_OUTPUT" >&2
+  exit 1
+}
+[[ "$NODE_VERSION_OUTPUT" =~ ^v[0-9]+ ]] || {
+  echo "内置 Node 版本输出异常：$NODE_VERSION_OUTPUT" >&2
+  exit 1
+}
+NODE_VERSION="${NODE_VERSION_OUTPUT#v}"
+IFS=. read -r NODE_MAJOR NODE_MINOR _ <<< "$NODE_VERSION"
+if (( NODE_MAJOR < 22 || (NODE_MAJOR == 22 && NODE_MINOR < 19) )); then
+  echo "内置 Node 版本过低：$NODE_VERSION_OUTPUT；插件运行时至少需要 Node 22.19.0。" >&2
+  exit 1
+fi
+echo "内置 Node 探针通过：$NODE_VERSION_OUTPUT"
+
 # Ship a small, private first-run profile so a fresh App installation already
 # contains the supported default plugin. This profile is copied into the
 # user's App-owned DSH_HOME only when no profile exists; existing profiles and
@@ -88,17 +107,6 @@ if [[ -d "$DEFAULT_PROFILE_HOME/profiles/node_modules" ]]; then
   rm -rf "$DEFAULT_PROFILE_HOME/profiles/node_modules"
 fi
 echo "默认插件 profile 已生成：$DEFAULT_PLUGIN_SPEC"
-
-# The bundled Node must actually run before it can be shipped.
-NODE_VERSION_OUTPUT="$("$STAGING_ROOT/runtime/node/bin/node" --version 2>&1)" || {
-  echo "内置 Node 无法运行：$NODE_VERSION_OUTPUT" >&2
-  exit 1
-}
-[[ "$NODE_VERSION_OUTPUT" =~ ^v[0-9]+ ]] || {
-  echo "内置 Node 版本输出异常：$NODE_VERSION_OUTPUT" >&2
-  exit 1
-}
-echo "内置 Node 探针通过：$NODE_VERSION_OUTPUT"
 
 if [[ -e "$DESTINATION" ]]; then
   BACKUP="$DESTINATION.backup.$(date +%Y%m%d-%H%M%S)-$$"

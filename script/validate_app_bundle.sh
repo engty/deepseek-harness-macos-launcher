@@ -41,6 +41,11 @@ if [[ "$REQUIRE_BUNDLED_RUNTIME" == "1" || -d "$RUNTIME_ROOT" ]]; then
     node_version="$("$RUNTIME_ROOT/node/bin/node" --version 2>&1)" \
       || fail "bundled Node does not run: $node_version"
     [[ "$node_version" =~ ^v[0-9]+ ]] || fail "bundled Node version output is invalid: $node_version"
+    node_semver="${node_version#v}"
+    IFS=. read -r node_major node_minor _ <<< "$node_semver"
+    if (( node_major < 22 || (node_major == 22 && node_minor < 19) )); then
+      fail "bundled Node is too old: $node_version (requires at least v22.19.0)"
+    fi
     echo "Bundled Node probe passed: $node_version"
     probe_home="$(mktemp -d)"
     trap 'rm -rf "$probe_home"' EXIT

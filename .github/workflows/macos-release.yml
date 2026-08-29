@@ -13,7 +13,7 @@ permissions:
   contents: read
 
 env:
-  NODE_VERSION: '22.18.0'
+  NODE_VERSION: '22.19.0'
   PNPM_VERSION: '10.19.0'
   HARNESS_VERSION: '0.1.0-rc.6'
 

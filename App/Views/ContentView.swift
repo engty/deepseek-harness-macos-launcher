@@ -215,6 +215,9 @@ private struct StartupView: View {
             if case .starting = model.phase {
                 ProgressView()
                     .controlSize(.small)
+                Text("首次安装或更新插件时，可能需要几分钟准备依赖。")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
             } else {
                 Text(detailText)
                     .multilineTextAlignment(.center)

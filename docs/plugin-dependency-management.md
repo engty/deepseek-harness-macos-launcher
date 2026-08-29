@@ -218,7 +218,7 @@ https://github.com/...git
 目标插件：github:mishibeikejie/zat-dsh-engine
 
 运行环境：
-• Node.js 22.18.0（App 内置）
+• Node.js 22.19.0（App 内置）
 • dsh 0.1.0-rc.6（App 内置）
 • pnpm 10.19.0（App 内置）
 • git / curl（macOS 系统）
