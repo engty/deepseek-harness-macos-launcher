@@ -16,31 +16,16 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 980, minHeight: 680)
-        .toolbar {
-#if swift(>=6.2)
-            if #available(macOS 26.0, *) {
-                ToolbarItem(placement: .primaryAction) {
-                    statusSummary
-                }
-                // The status/余额 controls are intentionally transparent
-                // toolbar content. Do not let macOS add a shared glass
-                // capsule around them.
-                .sharedBackgroundVisibility(.hidden)
-            } else {
-                ToolbarItem(placement: .primaryAction) {
-                    statusSummary
-                }
-            }
-#else
-            // Older Xcode SDKs do not expose sharedBackgroundVisibility.
-            // Keep the toolbar source-compatible with the macOS 13 baseline;
-            // toolbarBackground below still removes the window toolbar glass.
-            ToolbarItem(placement: .primaryAction) {
-                statusSummary
-            }
-#endif
+        // Keep the status controls outside SwiftUI's toolbar item grouping.
+        // macOS can wrap toolbar items in a shared glass capsule even when
+        // that background is marked hidden; an overlay keeps this region
+        // truly borderless while retaining the top-trailing placement.
+        .overlay(alignment: .topTrailing) {
+            statusSummary
+                .padding(.top, 12)
+                .padding(.trailing, 18)
         }
-        .toolbarBackground(.hidden, for: .windowToolbar)
+        .modifier(HiddenWindowToolbar())
         .task {
             await model.startIfNeeded()
         }
@@ -111,6 +96,17 @@ struct ContentView: View {
             return .red
         case .unknown:
             return .secondary
+        }
+    }
+}
+
+private struct HiddenWindowToolbar: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(macOS 15.0, *) {
+            content.toolbar(.hidden, for: .windowToolbar)
+        } else {
+            content
         }
     }
 }
