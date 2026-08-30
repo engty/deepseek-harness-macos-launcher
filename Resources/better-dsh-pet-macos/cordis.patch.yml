@@ -1,0 +1,25 @@
+# macOS launcher defaults for the vendored better-dsh-pet adapter.
+# The bundle is installed in every fresh App-owned profile, but remains
+# disabled until the user explicitly enables the desktop pet from DSH settings.
+- insert:
+    - id: pet
+      name: 'better-dsh-pet'
+      config:
+        enabled: false
+        scale: 1
+        # Supported range is 0.4 (40%) to 1.2 (120%).
+        bubbleScale: 1
+        activityLevel: normal
+        reducedMotion: false
+        bubbleMode: always
+        bubbleStates: [SUCCESS, ERROR, WAITING]
+        includeSubagents: false
+        workMinutes: 25
+        breakMinutes: 5
+        roastEnabled: false
+        walkEnabled: true
+        enabledActions: []
+        actionOrder: []
+        petSize: 460
+        moveChance: 20
+        actionDelayMs: 0

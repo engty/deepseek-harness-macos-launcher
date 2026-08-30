@@ -26,6 +26,18 @@ Its license, terms, provider protocol, and ChatGPT subscription behavior are
 controlled by that upstream project and must be reviewed there before
 redistribution. Installing it is an explicit user action.
 
+## better-dsh-pet
+
+The fresh-install Runtime profile includes the upstream `better-dsh-pet@0.3.5`
+DSH bundle. The macOS-specific helper adapter is kept under
+`Resources/better-dsh-pet-macos` and is based on the public macOS reference
+port. The upstream code is MIT-licensed; the animation assets may carry
+additional non-commercial and attribution requirements, so releases preserve
+the upstream package README and license.
+
+- Upstream repository: <https://github.com/ysppwn721/better-dsh-pet>
+- macOS reference port: <https://github.com/williamhadeslee/better-dsh-pet-macos>
+
 ## Other dependencies
 
 Node.js, Swift, SwiftUI, AppKit, WebKit, pnpm, and transitive npm packages are

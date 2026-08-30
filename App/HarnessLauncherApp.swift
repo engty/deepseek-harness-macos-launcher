@@ -141,6 +141,17 @@ struct LauncherCommands: Commands {
         }
 
         CommandMenu("插件") {
+            Menu("桌宠") {
+                Button("显示桌宠") {
+                    model.setDesktopPetEnabled(true)
+                }
+                Button("隐藏桌宠") {
+                    model.setDesktopPetEnabled(false)
+                }
+            }
+
+            Divider()
+
             Button("安装插件…") {
                 model.installPluginPrompt()
             }

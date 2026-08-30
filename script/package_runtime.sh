@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ROOT="${1:-${HARNESS_RUNTIME_SOURCE:-}}"
 NODE_PATH="${HARNESS_NODE_PATH:-$(command -v node || true)}"
 DESTINATION="$ROOT_DIR/Resources/runtime"
-DEFAULT_PLUGIN_SPEC="${HARNESS_DEFAULT_PLUGIN_SPEC:-dsh1024@0.5.0}"
+DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2
@@ -82,9 +82,9 @@ if (( NODE_MAJOR < 22 || (NODE_MAJOR == 22 && NODE_MINOR < 19) )); then
 fi
 echo "内置 Node 探针通过：$NODE_VERSION_OUTPUT"
 
-# Ship a small, private first-run profile so a fresh App installation already
-# contains the supported default plugin. This profile is copied into the
-# user's App-owned DSH_HOME only when no profile exists; existing profiles and
+# Ship a private first-run profile so a fresh App installation already contains
+# the supported default plugins. This profile is copied into the user's
+# App-owned DSH_HOME only when no profile exists; existing profiles and
 # explicit plugin removal are never overwritten.
 DEFAULT_PROFILE_HOME="$STAGING_ROOT/runtime/default-profile"
 DEFAULT_RUNTIME_PATH="$STAGING_ROOT/runtime/node/bin:$STAGING_ROOT/runtime/node_modules/.bin:/usr/bin:/bin"
@@ -92,13 +92,25 @@ mkdir -p "$DEFAULT_PROFILE_HOME"
 PATH="$DEFAULT_RUNTIME_PATH" \
   DSH_HOME="$DEFAULT_PROFILE_HOME" \
   "$STAGING_ROOT/runtime/node_modules/.bin/dsh" --profile web --dump-config >/dev/null
-PATH="$DEFAULT_RUNTIME_PATH" \
-  DSH_HOME="$DEFAULT_PROFILE_HOME" \
-  "$STAGING_ROOT/runtime/node_modules/.bin/dsh" plugin --profile web add "$DEFAULT_PLUGIN_SPEC"
+read -r -a DEFAULT_PLUGIN_SPEC_LIST <<< "$DEFAULT_PLUGIN_SPECS"
+for plugin_spec in "${DEFAULT_PLUGIN_SPEC_LIST[@]}"; do
+  PATH="$DEFAULT_RUNTIME_PATH" \
+    DSH_HOME="$DEFAULT_PROFILE_HOME" \
+    "$STAGING_ROOT/runtime/node_modules/.bin/dsh" plugin --profile web add "$plugin_spec"
+done
 [[ -f "$DEFAULT_PROFILE_HOME/profiles/web/package.json" ]] || {
   echo "默认插件 profile 未生成 package.json。" >&2
   exit 1
 }
+
+# better-dsh-pet is published as a cross-platform DSH bundle. On macOS, apply
+# the reviewed adapter after the official package is resolved so its Electron
+# helper uses the App-owned DSH_HOME and does not rely on Windows APIs or
+# globally installed runtimes.
+if [[ "$(uname -s)" == "Darwin" && " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" better-dsh-pet@0.3.5 "* ]]; then
+  PET_PACKAGE="$DEFAULT_PROFILE_HOME/profiles/web/node_modules/better-dsh-pet"
+  "$ROOT_DIR/script/patch_better_dsh_pet_macos.sh" "$PET_PACKAGE"
+fi
 # Harness creates this shared directory with absolute links to the temporary
 # staging Runtime. It is intentionally regenerated on the user's first start,
 # where the links can point at the final bundled Runtime path; shipping the
@@ -106,7 +118,7 @@ PATH="$DEFAULT_RUNTIME_PATH" \
 if [[ -d "$DEFAULT_PROFILE_HOME/profiles/node_modules" ]]; then
   rm -rf "$DEFAULT_PROFILE_HOME/profiles/node_modules"
 fi
-echo "默认插件 profile 已生成：$DEFAULT_PLUGIN_SPEC"
+echo "默认插件 profile 已生成：$DEFAULT_PLUGIN_SPECS"
 
 if [[ -e "$DESTINATION" ]]; then
   BACKUP="$DESTINATION.backup.$(date +%Y%m%d-%H%M%S)-$$"

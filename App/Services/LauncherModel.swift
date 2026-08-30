@@ -437,6 +437,45 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    /// Toggles the bundled desktop pet through its live DSH settings endpoint.
+    /// This does not mutate the profile or restart Harness, so enabling or
+    /// hiding the pet cannot interrupt a running conversation.
+    func setDesktopPetEnabled(_ enabled: Bool) {
+        guard case let .ready(baseURL) = phase else {
+            presentInfoAlert(
+                title: "桌宠暂不可用",
+                message: "请先等待 DeepSeek Harness 启动完成。"
+            )
+            return
+        }
+
+        let endpoint = baseURL
+            .appendingPathComponent("plugins")
+            .appendingPathComponent("better-dsh-pet")
+            .appendingPathComponent("config")
+        var request = URLRequest(url: endpoint)
+        request.httpMethod = "PATCH"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["enabled": enabled])
+
+        Task { @MainActor [weak self] in
+            do {
+                let (_, response) = try await URLSession.shared.data(for: request)
+                guard let httpResponse = response as? HTTPURLResponse,
+                      (200..<300).contains(httpResponse.statusCode) else {
+                    throw URLError(.badServerResponse)
+                }
+                let state = enabled ? "enabled" : "disabled"
+                AppLogger.plugins.info("Desktop pet \(state, privacy: .public)")
+            } catch {
+                self?.presentInfoAlert(
+                    title: enabled ? "桌宠启动失败" : "桌宠停用失败",
+                    message: error.localizedDescription
+                )
+            }
+        }
+    }
+
     var balanceDisplayText: String {
         switch balanceState {
         case .notConfigured:

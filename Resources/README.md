@@ -11,7 +11,7 @@ Resources/runtime/
   node_modules/
     .bin/pnpm
   default-profile/
-    profiles/web/       # fresh-install profile, currently dsh1024
+    profiles/web/       # fresh-install profile: dsh1024 + better-dsh-pet
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -37,9 +37,18 @@ machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
-(currently `0.5.0`). On first launch, the Launcher copies that profile into the
-App-owned `$DSH_HOME` only when no user profile exists. Existing profiles are
-left untouched, so removing the default plugin is not undone on restart.
+(`0.5.0`) and `better-dsh-pet` (`0.3.5`). The pet is disabled by default and
+can be enabled from `插件 → 桌宠 → 显示桌宠`. Its bubble size supports 40%–120%
+(default 100%). On first launch, the Launcher
+copies that profile into the App-owned `$DSH_HOME` only when no user profile
+exists. Existing profiles are left untouched, so removing a default plugin is
+not undone on restart.
+
+On macOS, the build applies the reviewed adapter in
+`Resources/better-dsh-pet-macos` to the upstream npm package. The desktop
+helper downloads the pinned Electron archive only when the user first shows
+the pet, stores it under the App-owned DSH_HOME, and verifies its SHA-256. It
+does not use a global Electron or alter the user's shell PATH.
 
 The Launcher also supports standard third-party plugins such as
 `@anionex/dsh-vision-toolkit`. Install it from the App's plugin menu with the
