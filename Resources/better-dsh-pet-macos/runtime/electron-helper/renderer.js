@@ -7,6 +7,13 @@
 
 // ---------- 配置 ----------
 const params = new URLSearchParams(location.search)
+function numberParam(name) {
+  const raw = params.get(name)
+  if (raw === null || raw.trim() === '') return null
+  const value = Number(raw)
+  return Number.isFinite(value) ? value : null
+}
+
 const CONFIG = {
   enabled: params.get('enabled') !== '0',
   scale: Number(params.get('scale') || '1'),
@@ -171,8 +178,8 @@ if (CONFIG.reducedMotion) {
 
 // 全屏透明画布内，宠物初始放在右下角；拖拽时只移动这个 DOM，不移动窗口。
 let petPos = {
-  x: window.innerWidth - size - 24,
-  y: window.innerHeight - size * 9 / 16 - 24,
+  x: numberParam('positionX') ?? (window.innerWidth - size - 24),
+  y: numberParam('positionY') ?? (window.innerHeight - size * 9 / 16 - 24),
 }
 function applyPetPosition() {
   rootEl.style.left = petPos.x + 'px'
@@ -878,6 +885,8 @@ function endDrag(e) {
     hitEl.classList.remove('dragging')
   }
   if (wasDragging) {
+    // 只在用户实际拖动结束时保存；桌宠自己的待机走动不会覆盖用户位置。
+    window.petBridge.savePosition({ x: petPos.x, y: petPos.y })
     justDragged = true
     setTimeout(() => { justDragged = false }, 100)
     applyResume()

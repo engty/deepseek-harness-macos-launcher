@@ -8,7 +8,13 @@
 const { app, BrowserWindow, ipcMain, screen, shell } = require('electron')
 const path = require('node:path')
 const { spawn, execFile } = require('node:child_process')
-const { existsSync } = require('node:fs')
+const {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} = require('node:fs')
 
 // 允许无用户手势直接播放 MP3 闹钟
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required')
@@ -22,6 +28,44 @@ let mainWindow = null
 let pollTimer = null
 let speechProcess = null
 let speechGeneration = 0
+
+const POSITION_FILE_NAME = 'better-dsh-pet-position.json'
+
+// 位置只保存在当前 Harness 的私有 DSH_HOME；不写入系统全局配置，也不保存
+// 任何 API Key 或会话数据。坐标是相对于桌宠透明画布左上角的 CSS 像素。
+function positionFilePath() {
+  const dshHome = String(process.env.DSH_HOME || '').trim()
+  if (dshHome) return path.join(dshHome, POSITION_FILE_NAME)
+  return path.join(app.getPath('userData'), POSITION_FILE_NAME)
+}
+
+function loadSavedPosition() {
+  try {
+    const value = JSON.parse(readFileSync(positionFilePath(), 'utf8'))
+    if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) {
+      return { x: Number(value.x), y: Number(value.y) }
+    }
+  } catch {
+    // 首次启动或旧文件损坏时使用默认位置。
+  }
+  return null
+}
+
+function savePosition(position) {
+  if (!position || !Number.isFinite(position.x) || !Number.isFinite(position.y)) return
+  const target = positionFilePath()
+  try {
+    mkdirSync(path.dirname(target), { recursive: true, mode: 0o700 })
+    const temporary = `${target}.tmp-${process.pid}`
+    writeFileSync(temporary, JSON.stringify({
+      x: Number(position.x),
+      y: Number(position.y),
+    }), { encoding: 'utf8', mode: 0o600 })
+    renameSync(temporary, target)
+  } catch (error) {
+    console.error(`[better-dsh-pet-helper] failed to save position: ${error.message}`)
+  }
+}
 
 // Windows 版使用 System.Speech；macOS 用系统自带的 say，避免再引入一套
 // 语音引擎或把音频上传到网络。参数通过 execFile 数组传递，不经过 shell。
@@ -144,6 +188,7 @@ function openDesktop() {
 function createWindow() {
   const scale = Number(process.env.DSH_PET_SCALE || '1')
   const bubbleScale = Number(process.env.DSH_PET_BUBBLE_SCALE || '1')
+  const savedPosition = loadSavedPosition()
   // 使用主屏工作区作为透明画布，宠物在画布内自由移动，不移动窗口本身。
   const display = screen.getPrimaryDisplay()
   const area = display.workArea
@@ -186,6 +231,8 @@ function createWindow() {
     query: {
       scale: String(scale),
       bubbleScale: String(bubbleScale),
+      positionX: String(savedPosition?.x ?? ''),
+      positionY: String(savedPosition?.y ?? ''),
       voiceEnabled: process.env.DSH_PET_VOICE_ENABLED === '0' ? '0' : '1',
       activityLevel: process.env.DSH_PET_ACTIVITY_LEVEL || 'normal',
       reducedMotion: process.env.DSH_PET_REDUCED_MOTION === '1' ? '1' : '0',
@@ -316,7 +363,10 @@ app.whenReady().then(() => {
     // 已改为全屏画布内移动宠物 DOM，不再移动窗口。
   })
   ipcMain.on('pet:drag-end', () => {
-    // 保留此通道，后续可用来做拖拽结束后的持久化。
+    // 保留此通道，兼容旧版 renderer；坐标由 pet:save-position 单独保存。
+  })
+  ipcMain.on('pet:save-position', (_event, position) => {
+    savePosition(position)
   })
 })
 

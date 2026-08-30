@@ -24,6 +24,13 @@ contextBridge.exposeInMainWorld('petBridge', {
   endDrag() {
     ipcRenderer.send('pet:drag-end')
   },
+  savePosition(position) {
+    if (!position || typeof position !== 'object') return
+    ipcRenderer.send('pet:save-position', {
+      x: Number(position.x),
+      y: Number(position.y),
+    })
+  },
   setIgnoreMouse(ignore) {
     ipcRenderer.send('pet:set-ignore-mouse', { ignore })
   },

@@ -22,7 +22,7 @@
    ```
    dsh plugin --profile web add dsh-llm-codex
    ```
-   App 首次启动时默认已经带有 `dsh1024`（当前锁定 `0.5.0`）和 `better-dsh-pet`（当前锁定 `0.3.5`）。1024Store 内容会出现在 Harness 页面侧边栏；桌宠默认关闭，可从 `插件 → 桌宠 → 显示桌宠` 开启，`隐藏桌宠` 会立即停止悬浮窗口，不会重启 Harness。装好的插件可以在同一菜单里启动、停用、卸载或清理缓存。插件 profile 保存在 App 私有 DSH_HOME；pnpm 的共享缓存沿用用户环境以兼容更多插件，卸载和“清理插件缓存”会在确认后回收未使用缓存。用户卸载默认插件后不会在重启时自动装回。
+   App 首次启动时默认已经带有 `dsh1024`（当前锁定 `0.5.0`）和 `better-dsh-pet`（当前锁定 `0.3.5`）。1024Store 内容会出现在 Harness 页面侧边栏；桌宠默认关闭，可从 `插件 → 桌宠 → 显示桌宠` 开启，`隐藏桌宠` 会立即停止悬浮窗口，不会重启 Harness。桌宠被手动拖动后会记住上次位置，重启 App 会自动恢复；更换屏幕或分辨率时会自动将位置校正到可见区域。装好的插件可以在同一菜单里启动、停用、卸载或清理缓存。插件 profile 保存在 App 私有 DSH_HOME；pnpm 的共享缓存沿用用户环境以兼容更多插件，卸载和“清理插件缓存”会在确认后回收未使用缓存。用户卸载默认插件后不会在重启时自动装回。
    桌宠的 macOS 适配层由本项目在构建时应用到上游包；气泡大小支持 40%–120%，默认 100%。macOS 语音播报使用系统 `/usr/bin/say`，默认使用 `Yue (Premium)`（月）高级中文音色，未安装时自动回退到系统默认音色，不上传音频；上游依赖 Windows SAPI 的麦克风识别入口在 macOS 版保持关闭。首次显示桌宠时才会把固定版本 Electron 下载到 App 私有 DSH_HOME，并校验 SHA-256，不安装到系统全局目录。
    需要识图时可按官方标准方式安装 `@anionex/dsh-vision-toolkit`：
    `dsh plugin --profile web add @anionex/dsh-vision-toolkit`。它会在 App 私有目录准备隔离的 Python、Pillow、NumPy 和 vtracer，不写入系统 Python；首次启动视觉插件可能需要几分钟准备依赖，启动器会等待其完成。
