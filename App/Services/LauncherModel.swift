@@ -84,6 +84,7 @@ final class LauncherModel: ObservableObject {
         do {
             try paths.prepare()
             dataSlotManager.recoverPendingTransaction(paths: paths)
+            updateService.cleanupTemporaryFiles(paths: paths)
             plugins = profileManager.refresh()
             // Restore the binding state from Keychain. The item is created
             // without an access-control prompt, so a non-interactive read is
@@ -144,6 +145,7 @@ final class LauncherModel: ObservableObject {
         do {
             try paths.prepare()
             dataSlotManager.recoverPendingTransaction(paths: paths)
+            updateService.cleanupTemporaryFiles(paths: paths)
             let installation = try locator.locate()
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
@@ -155,6 +157,15 @@ final class LauncherModel: ObservableObject {
             _ = try defaultProfileInstaller.syncBetterDshPetAdapter(
                 paths: paths,
                 runtimeRoot: installation.root
+            )
+            // dsh-mnemon 0.3.5 ships the newer projection descriptor shape,
+            // while the bundled 0.1.0-rc.6 Runtime still reads `schema` and
+            // top-level `view`. Adapt only that known package/version before
+            // Harness loads the profile; the adapter reverses itself when a
+            // newer Runtime is activated.
+            _ = try defaultProfileInstaller.syncDshMnemonProjectionCompatibility(
+                paths: paths,
+                runtimeVersion: installation.version
             )
             let url = try await processController.start(
                 installation: installation,
@@ -1033,6 +1044,7 @@ final class LauncherModel: ObservableObject {
     private func downloadOfficialLatestUpdate(_ official: OfficialHarnessVersionResult) async {
         guard beginExclusiveOperation() else { return }
         defer { endExclusiveOperation() }
+        defer { updateService.cleanupTemporaryFiles(paths: paths) }
         updateState = .checking
         do {
             let currentInstallation = try locator.locate()
@@ -1070,6 +1082,7 @@ final class LauncherModel: ObservableObject {
     private func downloadLatestUpdate(_ manifest: RuntimeManifest) async {
         guard beginExclusiveOperation() else { return }
         defer { endExclusiveOperation() }
+        defer { updateService.cleanupTemporaryFiles(paths: paths) }
         updateState = .checking
         do {
             runtimeUpdateStage = .downloading
@@ -1124,6 +1137,13 @@ final class LauncherModel: ObservableObject {
 
             // Always boot the new Runtime against a clone of the user's real
             // profile, even when the App was stopped before the update.
+            _ = try defaultProfileInstaller.syncDshMnemonProjectionCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                ),
+                runtimeVersion: newActivation.installation.version ?? manifest.harness.version
+            )
             runtimeUpdateStage = .testing
             let candidateController = HarnessProcessController()
             do {
@@ -1200,9 +1220,9 @@ final class LauncherModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "确认更新 DeepSeek Harness？"
         if artifactURL.isFileURL {
-            alert.informativeText = "版本：\(manifest.harness.version)\n\n官方 npm 包已在 App 私有 Runtime 中重建，并通过版本、大小和 SHA-256 校验。不会写入系统全局 Node/pnpm，也不会修改当前插件 profile。\n\n确认后将优雅停止当前 Harness，激活新 Runtime，并用当前插件 profile 做启动检查。"
+            alert.informativeText = "版本：\(manifest.harness.version)\n\n更新包已通过校验。"
         } else {
-            alert.informativeText = "版本：\(manifest.harness.version)\n\nartifact 已通过 HTTPS、大小和 SHA-256 校验，并暂存于：\n\(artifactURL.path)\n\n当前更新源不使用公钥签名，请确认该 feed 属于你信任的发布方。确认后将优雅停止当前 Harness，激活新 Runtime，并用当前插件 profile 做启动检查。"
+            alert.informativeText = "版本：\(manifest.harness.version)\n\n更新包已通过校验。"
         }
         alert.alertStyle = .informational
         alert.addButton(withTitle: "立即更新")
@@ -1213,19 +1233,31 @@ final class LauncherModel: ObservableObject {
     private func presentUpdateAlert(_ result: RuntimeUpdateResult) {
         let alert = NSAlert()
         alert.messageText = "发现 Harness Runtime 更新"
-        alert.informativeText = "候选版本：\(result.manifest.runtimeID)\n\n当前版本：\(result.currentRuntimeID ?? runtimeVersion ?? "unknown")\n\n请点击顶栏的圆形下载按钮下载并校验更新 artifact。"
+        alert.informativeText = "候选版本：\(result.manifest.runtimeID)\n当前版本：\(result.currentRuntimeID ?? runtimeVersion ?? "unknown")"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        alert.addButton(withTitle: "立即更新")
+        alert.addButton(withTitle: "暂不更新")
+        if alert.runModal() == .alertFirstButtonReturn {
+            scheduleRuntimeUpdateFromAlert()
+        }
     }
 
     private func presentOfficialHarnessUpdateAlert(_ result: OfficialHarnessVersionResult) {
         let alert = NSAlert()
         alert.messageText = "发现官方 Harness 更新"
-        alert.informativeText = "官方最新版本：\(result.version)\n当前内置版本：\(runtimeVersion ?? "unknown")\n\n点击右上角下载按钮后，启动器会在 App 私有目录重建完整 Runtime，确认后执行启动预检并切换版本。不会写入系统全局 Node/pnpm，也不会修改当前插件 profile。"
+        alert.informativeText = "官方最新版本：\(result.version)\n当前内置版本：\(runtimeVersion ?? "unknown")"
         alert.alertStyle = .informational
-        alert.addButton(withTitle: "知道了")
-        alert.runModal()
+        alert.addButton(withTitle: "立即更新")
+        alert.addButton(withTitle: "暂不更新")
+        if alert.runModal() == .alertFirstButtonReturn {
+            scheduleRuntimeUpdateFromAlert()
+        }
+    }
+
+    private func scheduleRuntimeUpdateFromAlert() {
+        Task { @MainActor [weak self] in
+            await self?.downloadLatestUpdateIfAvailable()
+        }
     }
 
     private func presentAppUpdateAlert(_ result: AppUpdateResult) {

@@ -40,12 +40,18 @@ struct DeepSeekCredentialStore {
             throw DeepSeekCredentialStoreError.unreadableDocument
         }
 
+        var insideRefs = false
         for rawLine in text.components(separatedBy: .newlines) {
             let line = rawLine.hasPrefix("\u{FEFF}") ? String(rawLine.dropFirst()) : rawLine
             let indentation = line.prefix { $0 == " " || $0 == "\t" }
-            guard indentation.isEmpty, let colon = line.firstIndex(of: ":") else { continue }
+            guard let colon = line.firstIndex(of: ":") else { continue }
             let key = String(line[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard key == Self.reference else { continue }
+            if indentation.isEmpty {
+                insideRefs = key == "refs"
+                if key != Self.reference { continue }
+            } else if !insideRefs || key != Self.reference {
+                continue
+            }
             let scalar = String(line[line.index(after: colon)...])
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             guard !scalar.isEmpty else { throw DeepSeekCredentialStoreError.invalidValue }
@@ -63,21 +69,40 @@ struct DeepSeekCredentialStore {
         var lines = existing.components(separatedBy: .newlines)
         let replacement = "\(Self.reference): \(encodeScalar(apiKey))"
         var replaced = false
+        var refsIndex: Int?
+        var insideRefs = false
 
         for index in lines.indices {
             let line = lines[index]
             let indentation = line.prefix { $0 == " " || $0 == "\t" }
-            guard indentation.isEmpty, let colon = line.firstIndex(of: ":") else { continue }
+            guard let colon = line.firstIndex(of: ":") else { continue }
             let key = String(line[..<colon]).trimmingCharacters(in: .whitespacesAndNewlines)
-            guard key == Self.reference else { continue }
-            lines[index] = replacement
-            replaced = true
-            break
+            if indentation.isEmpty {
+                insideRefs = key == "refs"
+                if key == Self.reference {
+                    lines[index] = replacement
+                    replaced = true
+                    break
+                }
+                if insideRefs { refsIndex = index }
+            } else if insideRefs, key == Self.reference {
+                // Harness's standard credentials document stores provider
+                // references under `refs:`. Preserve that shape so the
+                // Runtime and the native balance query resolve one value.
+                let prefix = String(indentation)
+                lines[index] = "\(prefix)\(replacement)"
+                replaced = true
+                break
+            }
         }
 
         if !replaced {
-            if !existing.isEmpty, !existing.hasSuffix("\n") { lines.append("") }
-            lines.append(replacement)
+            if let refsIndex {
+                lines.insert("  \(replacement)", at: refsIndex + 1)
+            } else {
+                if !existing.isEmpty, !existing.hasSuffix("\n") { lines.append("") }
+                lines.append(replacement)
+            }
         }
 
         let text = lines.joined(separator: "\n").trimmingCharacters(in: .newlines) + "\n"

@@ -68,18 +68,7 @@ final class HarnessProcessController {
         let process = Process()
         let outputPipe = Pipe()
         let errorPipe = Pipe()
-        // Use the explicit profile form because the current web alias rejects
-        // parent launcher flags such as --patch.
-        let dshArguments = [
-            "--profile", "web"
-        ] + (overlayURL.map { ["--patch", $0.path] } ?? []) + [
-            "--host", "127.0.0.1",
-            "--port", "0"
-        ]
-        let command = installation.command(arguments: dshArguments)
-        process.executableURL = command.executable
-        process.arguments = command.arguments
-        process.currentDirectoryURL = currentDirectoryOverride ?? paths.activeDataSlot
+        let currentDirectory = currentDirectoryOverride ?? paths.activeDataSlot
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
@@ -96,6 +85,30 @@ final class HarnessProcessController {
             environment: environment,
             privateToolchainRoot: paths.toolchain
         ).runtimeSearchPath(installation: installation)
+
+        // Use the explicit profile form because the current web alias rejects
+        // parent launcher flags such as --patch. Newer Harness runtimes expose
+        // `--no-open`, which keeps the UI inside this App's WKWebView. Probe
+        // the installed runtime instead of assuming a version threshold so
+        // older runtimes remain launchable without receiving an unknown flag.
+        var dshArguments = [
+            "--profile", "web"
+        ] + (overlayURL.map { ["--patch", $0.path] } ?? []) + [
+            "--host", "127.0.0.1",
+            "--port", "0"
+        ]
+        if await supportsNoOpen(
+            installation: installation,
+            environment: environment,
+            currentDirectory: currentDirectory
+        ) {
+            dshArguments.append("--no-open")
+        }
+
+        let command = installation.command(arguments: dshArguments)
+        process.executableURL = command.executable
+        process.arguments = command.arguments
+        process.currentDirectoryURL = currentDirectory
         process.environment = environment
 
         self.process = process
@@ -275,6 +288,33 @@ final class HarnessProcessController {
         errorPipe = nil
         process?.terminationHandler = nil
         process = nil
+    }
+
+    private func supportsNoOpen(
+        installation: RuntimeInstallation,
+        environment: [String: String],
+        currentDirectory: URL
+    ) async -> Bool {
+        let command = installation.command(arguments: ["--profile", "web", "--help"])
+        guard let result = try? await SubprocessRunner.run(
+            executable: command.executable,
+            arguments: command.arguments,
+            environment: environment,
+            currentDirectory: currentDirectory,
+            timeout: 15,
+            outputLimit: 128 * 1024
+        ), result.status == 0 else {
+            return false
+        }
+        return Self.helpOutputContainsNoOpen(result.output)
+    }
+
+    /// Kept separate from process probing so the capability check is explicit
+    /// and can be covered without starting a server in tests.
+    static func helpOutputContainsNoOpen(_ output: String) -> Bool {
+        output.split(whereSeparator: \.isNewline).contains { line in
+            line.range(of: #"(^|\s)--no-open(\s|$)"#, options: .regularExpression) != nil
+        }
     }
 
     private func cleanupStaleSidecar(for installation: RuntimeInstallation, paths: AppPaths) {

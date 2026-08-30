@@ -138,6 +138,43 @@ final class RuntimeUpdateService {
         throw lastError
     }
 
+    /// Removes only update workspace contents. Activated Runtime trees live
+    /// under Application Support/runtimes and are intentionally not touched;
+    /// these cache roots contain downloaded archives, candidate data slots,
+    /// and preflight copies that are safe to discard after an update attempt.
+    func cleanupTemporaryFiles(paths: AppPaths) {
+        let fileManager = FileManager.default
+        let roots = [
+            paths.caches.appendingPathComponent("updates/staging", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/official-artifacts", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/official-staging", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/base-preflight", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/data-slots", isDirectory: true)
+        ]
+
+        for root in roots {
+            guard let entries = try? fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: nil,
+                options: [.skipsHiddenFiles]
+            ) else {
+                continue
+            }
+            for entry in entries {
+                do {
+                    try fileManager.removeItem(at: entry)
+                    AppLogger.launcher.info(
+                        "Removed temporary Runtime update item: \(entry.lastPathComponent, privacy: .public)"
+                    )
+                } catch {
+                    AppLogger.launcher.error(
+                        "Could not remove temporary Runtime update item \(entry.lastPathComponent, privacy: .public): \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+    }
+
     /// Streams the file in 1 MiB chunks instead of loading the whole
     /// artifact into memory (`Data(contentsOf:)` previously made the hash
     /// step an OOM risk for large runtimes).

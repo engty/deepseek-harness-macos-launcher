@@ -28,8 +28,21 @@ struct ContentView: View {
         // system traffic lights and title while leaving this status region
         // transparent and independently sized.
         .background {
-            TitlebarStatusAccessory(content: AnyView(statusSummary))
-                .frame(width: 0, height: 0)
+            ZStack {
+                TitlebarStatusAccessory(
+                    content: AnyView(titlebarLeadingContent),
+                    layoutAttribute: .left,
+                    minimumWidth: 0,
+                    hidesWindowTitle: true
+                )
+                TitlebarStatusAccessory(
+                    content: AnyView(statusSummary),
+                    layoutAttribute: .right,
+                    minimumWidth: 220,
+                    hidesWindowTitle: false
+                )
+            }
+            .frame(width: 0, height: 0)
         }
         .task {
             await model.startIfNeeded()
@@ -75,6 +88,13 @@ struct ContentView: View {
                 .help("配置 DeepSeek API Key")
             }
 
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.trailing, 16)
+    }
+
+    private var runtimeUpdateControl: some View {
+        Group {
             if model.hasAvailableRuntimeUpdate {
                 Button {
                     model.downloadLatestUpdate()
@@ -88,7 +108,26 @@ struct ContentView: View {
             }
         }
         .fixedSize(horizontal: true, vertical: false)
-        .padding(.trailing, 16)
+    }
+
+    private var titlebarLeadingContent: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 4) {
+                Text("DeepSeek Harness")
+                    .font(.system(size: 14, weight: .semibold))
+
+                if let version = model.runtimeVersion, !version.isEmpty {
+                    Text(version)
+                        .font(.system(size: 9, weight: .semibold))
+                }
+            }
+            .foregroundStyle(.secondary)
+            .lineLimit(1)
+
+            runtimeUpdateControl
+        }
+        .fixedSize(horizontal: true, vertical: false)
+        .padding(.leading, 8)
     }
 
     private var balanceColor: Color {
@@ -135,9 +174,17 @@ private struct RuntimeUpdateProgressView: View {
 
 private struct TitlebarStatusAccessory: NSViewRepresentable {
     let content: AnyView
+    let layoutAttribute: NSLayoutConstraint.Attribute
+    let minimumWidth: CGFloat
+    let hidesWindowTitle: Bool
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(content: content)
+        Coordinator(
+            content: content,
+            layoutAttribute: layoutAttribute,
+            minimumWidth: minimumWidth,
+            hidesWindowTitle: hidesWindowTitle
+        )
     }
 
     func makeNSView(context: Context) -> WindowAnchorView {
@@ -162,12 +209,23 @@ private struct TitlebarStatusAccessory: NSViewRepresentable {
     @MainActor
     final class Coordinator {
         private var content: AnyView
+        private let layoutAttribute: NSLayoutConstraint.Attribute
+        private let minimumWidth: CGFloat
+        private let hidesWindowTitle: Bool
         private weak var window: NSWindow?
         private weak var hostingView: NSHostingView<AnyView>?
         private var accessoryController: NSTitlebarAccessoryViewController?
 
-        init(content: AnyView) {
+        init(
+            content: AnyView,
+            layoutAttribute: NSLayoutConstraint.Attribute,
+            minimumWidth: CGFloat,
+            hidesWindowTitle: Bool
+        ) {
             self.content = content
+            self.layoutAttribute = layoutAttribute
+            self.minimumWidth = minimumWidth
+            self.hidesWindowTitle = hidesWindowTitle
         }
 
         func update(_ content: AnyView) {
@@ -183,13 +241,17 @@ private struct TitlebarStatusAccessory: NSViewRepresentable {
 
             detach()
 
+            if hidesWindowTitle {
+                window.titleVisibility = .hidden
+            }
+
             let hostingView = NSHostingView(rootView: content)
             hostingView.setContentHuggingPriority(.required, for: .horizontal)
             hostingView.setContentCompressionResistancePriority(.required, for: .horizontal)
             hostingView.frame = NSRect(x: 0, y: 0, width: 260, height: 30)
 
             let accessoryController = NSTitlebarAccessoryViewController()
-            accessoryController.layoutAttribute = .right
+            accessoryController.layoutAttribute = layoutAttribute
             accessoryController.view = hostingView
             window.addTitlebarAccessoryViewController(accessoryController)
 
@@ -209,7 +271,7 @@ private struct TitlebarStatusAccessory: NSViewRepresentable {
             guard let hostingView else { return }
             hostingView.layoutSubtreeIfNeeded()
             let fittingSize = hostingView.fittingSize
-            let width = max(fittingSize.width, 220)
+            let width = max(fittingSize.width, minimumWidth)
             let height = max(fittingSize.height, 30)
             hostingView.setFrameSize(NSSize(width: width, height: height))
         }
@@ -220,6 +282,9 @@ private struct TitlebarStatusAccessory: NSViewRepresentable {
                     $0 === accessoryController
                 }) {
                     window.removeTitlebarAccessoryViewController(at: index)
+                }
+                if hidesWindowTitle {
+                    window.titleVisibility = .visible
                 }
             }
             window = nil

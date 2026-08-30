@@ -22,6 +22,7 @@ enum SubprocessRunnerError: LocalizedError {
 struct SubprocessResult {
     let status: Int32
     let output: String
+    let outputWasTruncated: Bool
 }
 
 /// Runs a short-lived helper process and streams its stdout/stderr into a
@@ -39,13 +40,23 @@ enum SubprocessRunner {
         arguments: [String],
         environment: [String: String]? = nil,
         currentDirectory: URL? = nil,
-        timeout: TimeInterval = SubprocessRunner.defaultTimeout
+        timeout: TimeInterval = SubprocessRunner.defaultTimeout,
+        outputLimit: Int = 4 * 1_024 * 1_024
     ) async throws -> SubprocessResult {
         try await withCheckedThrowingContinuation { continuation in
             let process = Process()
             let pipe = Pipe()
-            let buffer = BoundedSubprocessOutputBuffer(limit: 4 * 1_024 * 1_024)
+            let buffer = BoundedSubprocessOutputBuffer(limit: outputLimit)
             let gate = SubprocessCompletionGate()
+            // FileHandle readability callbacks can overlap the process
+            // termination handler. Reading the final bytes directly there
+            // used to let the two paths append chunks out of order; large
+            // `tar -tvf` output could then be misparsed as an unsafe archive
+            // even though the archive itself was valid. Serialize every pipe
+            // read, including the final drain, on one queue.
+            let readQueue = DispatchQueue(
+                label: "com.harness.desktop.launcher.subprocess-output-\(UUID().uuidString)"
+            )
             let commandDescription = executable.lastPathComponent
 
             process.executableURL = executable
@@ -60,9 +71,11 @@ enum SubprocessRunner {
             process.standardError = pipe
 
             pipe.fileHandleForReading.readabilityHandler = { handle in
-                let data = handle.availableData
-                guard !data.isEmpty else { return }
-                buffer.append(data)
+                readQueue.async {
+                    let data = handle.availableData
+                    guard !data.isEmpty else { return }
+                    buffer.append(data)
+                }
             }
 
             let timeoutWork = DispatchWorkItem {
@@ -87,11 +100,16 @@ enum SubprocessRunner {
                 guard gate.claim() else { return }
                 pipe.fileHandleForReading.readabilityHandler = nil
                 // The child has already exited here, so draining the rest of
-                // the pipe cannot block.
-                buffer.append(pipe.fileHandleForReading.readDataToEndOfFile())
+                // the pipe cannot block. Do it on the same serial queue as
+                // readability callbacks so no earlier chunk can be appended
+                // after the final drain.
+                readQueue.sync {
+                    buffer.append(pipe.fileHandleForReading.readDataToEndOfFile())
+                }
                 continuation.resume(returning: SubprocessResult(
                     status: process.terminationStatus,
-                    output: buffer.stringValue
+                    output: buffer.stringValue,
+                    outputWasTruncated: buffer.wasTruncated
                 ))
             }
 
@@ -113,6 +131,7 @@ final class BoundedSubprocessOutputBuffer: @unchecked Sendable {
     private let lock = NSLock()
     private let limit: Int
     private var data = Data()
+    private var truncated = false
 
     init(limit: Int) {
         self.limit = limit
@@ -124,6 +143,7 @@ final class BoundedSubprocessOutputBuffer: @unchecked Sendable {
         data.append(chunk)
         if data.count > limit {
             data = Data(data.suffix(limit))
+            truncated = true
         }
         lock.unlock()
     }
@@ -133,6 +153,12 @@ final class BoundedSubprocessOutputBuffer: @unchecked Sendable {
         let snapshot = data
         lock.unlock()
         return String(data: snapshot, encoding: .utf8) ?? ""
+    }
+
+    var wasTruncated: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return truncated
     }
 }
 

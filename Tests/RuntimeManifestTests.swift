@@ -464,6 +464,62 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func adaptsDshMnemonProjectionForLegacyRuntimeAndRestoresModernShape() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let packageDirectory = paths.profileWeb.appendingPathComponent(
+            "node_modules/dsh-mnemon",
+            isDirectory: true
+        )
+        let sourceURL = packageDirectory.appendingPathComponent("lib/index.js")
+        try fileManager.createDirectory(at: sourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"name":"dsh-mnemon","version":"0.3.5"}"#.utf8)
+            .write(to: packageDirectory.appendingPathComponent("package.json"))
+        let modernSource = [
+            "const projection = {",
+            "\tkey: \"mnemonSubagentTokenUsage\",",
+            "\tstateVersion: 1,",
+            "\tstateSchema: tokenUsageStateSchema,",
+            "\tinit: () => ({ descriptorSeen: false }),",
+            "\tapply: (state) => state,",
+            "\twire: {",
+            "\t\tviewSchema: tokenUsageSchema.nullable(),",
+            "\t\tview: (state) => state.descriptorSeen ? state.totals : null",
+            "\t}",
+            "};"
+        ].joined(separator: "\n")
+        try Data(modernSource.utf8).write(to: sourceURL)
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.syncDshMnemonProjectionCompatibility(
+            paths: paths,
+            runtimeVersion: "0.1.0-rc.6"
+        ))
+        let legacy = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(legacy.contains("schema: tokenUsageSchema.nullable(),"))
+        #expect(legacy.contains("view: (state) => state.descriptorSeen ? state.totals : null"))
+        #expect(!legacy.contains("stateSchema: tokenUsageStateSchema"))
+        #expect(!legacy.contains("viewSchema: tokenUsageSchema.nullable()"))
+
+        #expect(try installer.syncDshMnemonProjectionCompatibility(
+            paths: paths,
+            runtimeVersion: "0.1.1-rc.2"
+        ))
+        let restored = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(restored.contains("stateSchema: tokenUsageStateSchema,"))
+        #expect(restored.contains("viewSchema: tokenUsageSchema.nullable(),"))
+        #expect(restored.contains("wire: {"))
+    }
+
+    @Test
     @MainActor
     func rejectsRuntimeArchiveSymlinkEscapingStagingRoot() async throws {
         let fileManager = FileManager.default
@@ -562,6 +618,45 @@ struct RuntimeManifestTests {
         try manager.rollback(activation, paths: paths)
         let restored = try String(contentsOf: paths.profileWeb.appendingPathComponent("package.json"), encoding: .utf8)
         #expect(restored.contains("active-profile"))
+    }
+
+    @Test
+    @MainActor
+    func cleansOnlyTemporaryRuntimeUpdateFiles() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let updateRoots = [
+            paths.caches.appendingPathComponent("updates/staging", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/official-artifacts", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/official-staging", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/base-preflight", isDirectory: true),
+            paths.caches.appendingPathComponent("updates/data-slots", isDirectory: true)
+        ]
+        for (index, updateRoot) in updateRoots.enumerated() {
+            let item = updateRoot.appendingPathComponent("temporary-\(index)", isDirectory: true)
+            try fileManager.createDirectory(at: item, withIntermediateDirectories: true)
+            try Data("temporary".utf8).write(to: item.appendingPathComponent("payload"))
+        }
+
+        let activeRuntime = paths.runtimes.appendingPathComponent("official-active", isDirectory: true)
+        try fileManager.createDirectory(at: activeRuntime, withIntermediateDirectories: true)
+        try Data("active".utf8).write(to: activeRuntime.appendingPathComponent("payload"))
+
+        RuntimeUpdateService().cleanupTemporaryFiles(paths: paths)
+
+        for updateRoot in updateRoots {
+            #expect(try fileManager.contentsOfDirectory(at: updateRoot, includingPropertiesForKeys: nil).isEmpty)
+        }
+        #expect(fileManager.fileExists(atPath: activeRuntime.appendingPathComponent("payload").path))
     }
 
     @Test

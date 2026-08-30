@@ -21,6 +21,17 @@ struct SubprocessRunnerTests {
     }
 
     @Test
+    @MainActor
+    func detectsNoOpenCapabilityOnlyWhenAdvertised() {
+        #expect(HarnessProcessController.helpOutputContainsNoOpen(
+            "Usage: dsh --profile web [options]\n  --no-open  do not open the Web UI in the default browser\n"
+        ))
+        #expect(!HarnessProcessController.helpOutputContainsNoOpen(
+            "Usage: dsh --profile web [options]\n  --port <port>  listen port\n"
+        ))
+    }
+
+    @Test
     func timeoutTerminatesHungProcess() async throws {
         let clock = ContinuousClock()
         let start = clock.now

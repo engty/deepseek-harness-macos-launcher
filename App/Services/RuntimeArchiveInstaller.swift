@@ -211,6 +211,10 @@ final class RuntimeArchiveInstaller {
     /// currently has ~38k entries; 200k leaves generous headroom while still
     /// bounding work for a tar bomb.
     private static let maxArchiveEntries = 200_000
+    // The bundled Runtime currently produces roughly 7 MB for `tar -tf` and
+    // 11 MB for `tar -tvf`. Keep a generous bounded ceiling while rejecting
+    // anything larger instead of validating a truncated suffix.
+    private static let archiveListingOutputLimit = 64 * 1_024 * 1_024
     private static let listingTimeout: TimeInterval = 120
     private static let extractionTimeout: TimeInterval = 600
 
@@ -223,12 +227,16 @@ final class RuntimeArchiveInstaller {
         let listing = try await SubprocessRunner.run(
             executable: tarExecutable,
             arguments: ["-tf", artifact.path],
-            timeout: Self.listingTimeout
+            timeout: Self.listingTimeout,
+            outputLimit: Self.archiveListingOutputLimit
         )
         guard listing.status == 0 else {
             throw RuntimeArchiveError.archiveListingFailed(
                 SensitiveDataRedactor.redact(listing.output)
             )
+        }
+        guard !listing.outputWasTruncated else {
+            throw RuntimeArchiveError.archiveListingFailed("Runtime artifact 目录列表超过安全上限。")
         }
         let entries = listing.output.split(whereSeparator: \.isNewline).map(String.init)
         try validateArchiveEntries(entries)
@@ -240,12 +248,16 @@ final class RuntimeArchiveInstaller {
         let verbose = try await SubprocessRunner.run(
             executable: tarExecutable,
             arguments: ["-tvf", artifact.path],
-            timeout: Self.listingTimeout
+            timeout: Self.listingTimeout,
+            outputLimit: Self.archiveListingOutputLimit
         )
         guard verbose.status == 0 else {
             throw RuntimeArchiveError.archiveListingFailed(
                 SensitiveDataRedactor.redact(verbose.output)
             )
+        }
+        guard !verbose.outputWasTruncated else {
+            throw RuntimeArchiveError.archiveListingFailed("Runtime artifact 类型列表超过安全上限。")
         }
         try validateEntryTypes(verbose.output)
 

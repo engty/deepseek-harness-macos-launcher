@@ -92,6 +92,12 @@ final class OfficialHarnessRuntimeBuilder {
             "/usr/bin",
             "/bin"
         ].joined(separator: ":")
+        // The bundled Runtime may carry a mirror configured for the original
+        // npm install. Runtime updates must resolve the exact version reported
+        // by the official registry, so do not inherit a stale mirror or a
+        // user-level npm registry override here.
+        environment["npm_config_registry"] = "https://registry.npmjs.org"
+        environment["NPM_CONFIG_REGISTRY"] = "https://registry.npmjs.org"
         environment["npm_config_ignore_scripts"] = "true"
         environment["CI"] = "1"
 
@@ -103,6 +109,11 @@ final class OfficialHarnessRuntimeBuilder {
                 "add",
                 "--ignore-scripts",
                 "--lockfile=false",
+                // The bundled tree was installed by npm, while this update
+                // step uses pnpm. Without --force pnpm can report success but
+                // leave the old top-level package link in place.
+                "--force",
+                "--save-exact",
                 "@deepseek-ai/dsh@\(official.version)"
             ],
             environment: environment,

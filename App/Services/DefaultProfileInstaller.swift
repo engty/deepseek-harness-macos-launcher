@@ -84,6 +84,96 @@ struct DefaultProfileInstaller {
         return true
     }
 
+    /// Bridges the dsh-mnemon projection descriptor between the two Runtime
+    /// contracts currently in the wild. Harness Runtime 0.1.0-rc.6 expects
+    /// `schema` and a top-level `view`; dsh-mnemon 0.3.5 was published with
+    /// the newer `stateSchema`/`wire.viewSchema` shape. The latter makes the
+    /// old Runtime throw while serving `session.history`, which leaves a
+    /// completed turn with no visible messages. The transform is deliberately
+    /// narrow and reversible so a later Runtime upgrade restores the package's
+    /// native descriptor instead of leaving a stale compatibility mutation.
+    @discardableResult
+    func syncDshMnemonProjectionCompatibility(
+        paths: AppPaths,
+        runtimeVersion: String?
+    ) throws -> Bool {
+        try syncDshMnemonProjectionCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeVersion: runtimeVersion
+        )
+    }
+
+    /// Applies the same bridge to a staged data slot used for Runtime
+    /// preflight. An update candidate must use the projection contract of the
+    /// candidate Runtime, not the contract of the currently running one.
+    @discardableResult
+    func syncDshMnemonProjectionCompatibility(
+        profileWeb: URL,
+        runtimeVersion: String?
+    ) throws -> Bool {
+        let packageDirectory = profileWeb
+            .appendingPathComponent("node_modules/dsh-mnemon", isDirectory: true)
+            .resolvingSymlinksInPath()
+        let manifestURL = packageDirectory.appendingPathComponent("package.json")
+        guard fileManager.fileExists(atPath: manifestURL.path),
+              let identity = packageNameAndVersion(at: manifestURL),
+              identity.0 == "dsh-mnemon" else {
+            return false
+        }
+
+        let sourceURL = packageDirectory.appendingPathComponent("lib/index.js")
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else {
+            return false
+        }
+
+        let legacyRuntime = Self.usesLegacyProjectionContract(runtimeVersion)
+        guard let adapted = Self.adaptDshMnemonProjectionSource(source, legacyRuntime: legacyRuntime),
+              adapted != source else {
+            return false
+        }
+        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
+        AppLogger.plugins.info(
+            "Applied dsh-mnemon projection compatibility for Harness Runtime \(runtimeVersion ?? "unknown")."
+        )
+        return true
+    }
+
+    private static func usesLegacyProjectionContract(_ runtimeVersion: String?) -> Bool {
+        guard let runtimeVersion,
+              let parsed = StrictSemanticVersion(rawValue: runtimeVersion),
+              let firstModern = StrictSemanticVersion(rawValue: "0.1.1-rc.1") else {
+            return false
+        }
+        return parsed < firstModern
+    }
+
+    private static func adaptDshMnemonProjectionSource(
+        _ source: String,
+        legacyRuntime: Bool
+    ) -> String? {
+        let modernStateSchema = "stateSchema: tokenUsageStateSchema,"
+        let modernWire = "wire: {\n\t\tviewSchema: tokenUsageSchema.nullable(),\n\t\tview: (state) => state.descriptorSeen ? state.totals : null\n\t}"
+        let legacySchema = "schema: tokenUsageSchema.nullable(),"
+        let legacyView = "view: (state) => state.descriptorSeen ? state.totals : null"
+
+        if legacyRuntime {
+            guard source.contains(modernStateSchema), source.contains(modernWire) else {
+                return nil
+            }
+            return source
+                .replacingOccurrences(of: modernStateSchema, with: legacySchema)
+                .replacingOccurrences(of: modernWire, with: legacyView)
+        }
+
+        guard source.contains(legacySchema), source.contains(legacyView),
+              !source.contains(modernStateSchema) else {
+            return nil
+        }
+        return source
+            .replacingOccurrences(of: legacySchema, with: modernStateSchema)
+            .replacingOccurrences(of: legacyView, with: modernWire)
+    }
+
     private func packageNameAndVersion(at manifest: URL) -> (String, String)? {
         guard let data = try? Data(contentsOf: manifest),
               let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
