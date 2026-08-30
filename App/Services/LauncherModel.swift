@@ -27,6 +27,7 @@ final class LauncherModel: ObservableObject {
     private let pluginRunner: PluginCommandRunner
     private let pluginCacheService: PluginCacheService
     private let updateService: RuntimeUpdateService
+    private let officialHarnessVersionService: OfficialHarnessVersionService
     private let appUpdateService: AppUpdateService
     private let runtimeInstaller: RuntimeArchiveInstaller
     private let toolchainInstaller: ToolchainInstaller
@@ -41,6 +42,8 @@ final class LauncherModel: ObservableObject {
         account: DeepSeekCredentialStore.reference
     )
     private var latestManifest: RuntimeManifest?
+    private var latestOfficialHarnessVersion: OfficialHarnessVersionResult?
+    private var lastNotifiedUpdateKey: String?
     private var balanceRefreshTask: Task<Void, Never>?
     private var updateCheckTask: Task<Void, Never>?
     private var consecutiveCrashCount = 0
@@ -64,6 +67,7 @@ final class LauncherModel: ObservableObject {
         pluginRunner = PluginCommandRunner()
         pluginCacheService = PluginCacheService()
         updateService = RuntimeUpdateService()
+        officialHarnessVersionService = OfficialHarnessVersionService()
         appUpdateService = AppUpdateService()
         runtimeInstaller = RuntimeArchiveInstaller()
         toolchainInstaller = ToolchainInstaller()
@@ -370,7 +374,7 @@ final class LauncherModel: ObservableObject {
     }
 
     func checkForUpdates() {
-        Task { await checkForUpdates(presentResult: true) }
+        Task { await checkForUpdates(presentResult: true, notifyAvailable: true) }
     }
 
     func checkForAppUpdates() {
@@ -510,8 +514,19 @@ final class LauncherModel: ObservableObject {
     }
 
     var hasAvailableRuntimeUpdate: Bool {
-        if case .available = updateState { return true }
-        return false
+        switch updateState {
+        case .available, .officialAvailable:
+            return true
+        default:
+            return false
+        }
+    }
+
+    var runtimeUpdateHelpText: String {
+        if case .officialAvailable = updateState {
+            return "已发现官方 Harness 新版本，等待 Runtime 安装包"
+        }
+        return "下载 DeepSeek Harness 更新"
     }
 
     private func clearPluginCaches(_ entries: [PluginCacheEntry]) async {
@@ -811,7 +826,10 @@ final class LauncherModel: ObservableObject {
             do {
                 try await Task.sleep(nanoseconds: 3_000_000_000)
                 while !Task.isCancelled {
-                    await self?.checkForUpdates(presentResult: false)
+                    // Automatic checks stay quiet when nothing changed, but
+                    // surface a newly discovered official or packaged Runtime
+                    // once so the user does not have to open the menu.
+                    await self?.checkForUpdates(presentResult: false, notifyAvailable: true)
                     try await Task.sleep(nanoseconds: 21_600_000_000_000)
                 }
             } catch {
@@ -881,37 +899,88 @@ final class LauncherModel: ObservableObject {
         return keychainValue
     }
 
-    private func checkForUpdates(presentResult: Bool) async {
+    private func checkForUpdates(
+        presentResult: Bool,
+        notifyAvailable: Bool = false
+    ) async {
         let requestID = UUID()
         updateRequestID = requestID
         updateState = .checking
+
+        let manifestResult: RuntimeUpdateResult?
         do {
-            let result = try await updateService.check(currentHarnessVersion: runtimeVersion)
+            manifestResult = try await updateService.check(currentHarnessVersion: runtimeVersion)
+        } catch let error as RuntimeManifestError where error == .feedNotConfigured {
+            // Finder-launched builds do not have shell environment variables.
+            // Fall through to the official registry probe instead of silently
+            // hiding that a newer Harness package exists.
+            manifestResult = nil
+        } catch {
             guard requestID == updateRequestID else { return }
-            if result.isUpdateAvailable {
-                latestManifest = result.manifest
-                updateState = .available(result.manifest.runtimeID)
-                if presentResult { presentUpdateAlert(result) }
+            latestManifest = nil
+            latestOfficialHarnessVersion = nil
+            updateState = .failed(error.localizedDescription)
+            if presentResult {
+                presentInfoAlert(title: "无法检查 Harness Runtime 更新", message: error.localizedDescription)
+            }
+            return
+        }
+
+        guard requestID == updateRequestID else { return }
+        if let result = manifestResult, result.isUpdateAvailable {
+            latestManifest = result.manifest
+            latestOfficialHarnessVersion = nil
+            updateState = .available(result.manifest.runtimeID)
+            if presentResult {
+                presentUpdateAlert(result)
+            } else if notifyAvailable, shouldNotifyUpdate(key: "runtime:\(result.manifest.runtimeID)") {
+                presentUpdateAlert(result)
+            }
+            return
+        }
+
+        // The manifest feed is an optional artifact channel. The official
+        // npm registry remains the authoritative signal that DeepSeek has
+        // published a newer Harness package, even before our verified bundle
+        // has finished building.
+        do {
+            let official = try await officialHarnessVersionService.check()
+            guard requestID == updateRequestID else { return }
+            latestOfficialHarnessVersion = official
+            if official.isUpdateAvailable(currentHarnessVersion: runtimeVersion) {
+                latestManifest = nil
+                updateState = .officialAvailable(official.version)
+                if presentResult {
+                    presentOfficialHarnessUpdateAlert(official)
+                } else if notifyAvailable,
+                          shouldNotifyUpdate(key: "official:\(official.version)") {
+                    presentOfficialHarnessUpdateAlert(official)
+                }
             } else {
                 latestManifest = nil
                 updateState = .upToDate
-                if presentResult { presentInfoAlert(title: "Harness Runtime 已是最新", message: result.manifest.runtimeID) }
+                if presentResult {
+                    presentInfoAlert(
+                        title: "Harness Runtime 已是最新",
+                        message: "当前官方版本：\(official.version)"
+                    )
+                }
             }
         } catch {
             guard requestID == updateRequestID else { return }
             latestManifest = nil
+            latestOfficialHarnessVersion = nil
             updateState = .failed(error.localizedDescription)
             if presentResult {
-                let title: String
-                if let runtimeError = error as? RuntimeManifestError,
-                   runtimeError == .feedNotConfigured {
-                    title = "Harness Runtime 更新源未配置"
-                } else {
-                    title = "无法检查 Harness Runtime 更新"
-                }
-                presentInfoAlert(title: title, message: error.localizedDescription)
+                presentInfoAlert(title: "无法检查 Harness Runtime 更新", message: error.localizedDescription)
             }
         }
+    }
+
+    private func shouldNotifyUpdate(key: String) -> Bool {
+        guard lastNotifiedUpdateKey != key else { return false }
+        lastNotifiedUpdateKey = key
+        return true
     }
 
     private func checkForAppUpdates(presentResult: Bool) async {
@@ -944,8 +1013,12 @@ final class LauncherModel: ObservableObject {
     private func downloadLatestUpdateIfAvailable() async {
         guard let manifest = latestManifest else {
             await checkForUpdates(presentResult: false)
-            guard let manifest = latestManifest else { return }
-            await downloadLatestUpdate(manifest)
+            if let manifest = latestManifest {
+                await downloadLatestUpdate(manifest)
+            } else if let official = latestOfficialHarnessVersion,
+                      case .officialAvailable = updateState {
+                presentOfficialHarnessBundlePendingAlert(official)
+            }
             return
         }
         await downloadLatestUpdate(manifest)
@@ -1086,6 +1159,24 @@ final class LauncherModel: ObservableObject {
         alert.informativeText = "候选版本：\(result.manifest.runtimeID)\n\n当前版本：\(result.currentRuntimeID ?? runtimeVersion ?? "unknown")\n\n请点击顶栏的圆形下载按钮下载并校验更新 artifact。"
         alert.alertStyle = .informational
         alert.addButton(withTitle: "OK")
+        alert.runModal()
+    }
+
+    private func presentOfficialHarnessUpdateAlert(_ result: OfficialHarnessVersionResult) {
+        let alert = NSAlert()
+        alert.messageText = "发现官方 Harness 更新"
+        alert.informativeText = "官方最新版本：\(result.version)\n当前内置版本：\(runtimeVersion ?? "unknown")\n\n启动器已记录这次更新。对应的 Runtime 安装包完成校验后，右上角下载按钮即可执行升级。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "知道了")
+        alert.runModal()
+    }
+
+    private func presentOfficialHarnessBundlePendingAlert(_ result: OfficialHarnessVersionResult) {
+        let alert = NSAlert()
+        alert.messageText = "官方 Harness 已有新版本"
+        alert.informativeText = "官方最新版本：\(result.version)\n当前内置版本：\(runtimeVersion ?? "unknown")\n\n当前还没有可校验的 App Runtime 安装包，因此暂时不会直接安装 npm 源码包。待 Runtime 包发布后即可从右上角完成升级。"
+        alert.alertStyle = .informational
+        alert.addButton(withTitle: "知道了")
         alert.runModal()
     }
 

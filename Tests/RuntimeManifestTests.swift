@@ -127,6 +127,52 @@ struct RuntimeManifestTests {
 
     @Test
     @MainActor
+    func officialHarnessVersionServiceDetectsNewNpmVersion() async throws {
+        let endpoint = URL(string: "https://updates.example.com/npm-dsh-latest")!
+        URLProtocolStub.responses = [
+            endpoint: (
+                200,
+                Data(#"{"name":"@deepseek-ai/dsh","version":"0.1.1-rc.2"}"#.utf8)
+            )
+        ]
+        defer { URLProtocolStub.responses = [:] }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let service = OfficialHarnessVersionService(
+            environment: ["HARNESS_OFFICIAL_VERSION_URL": endpoint.absoluteString],
+            session: URLSession(configuration: configuration)
+        )
+
+        let result = try await service.check()
+        #expect(result.version == "0.1.1-rc.2")
+        #expect(result.isUpdateAvailable(currentHarnessVersion: "0.1.0-rc.6"))
+        #expect(!result.isUpdateAvailable(currentHarnessVersion: "0.1.1-rc.2"))
+    }
+
+    @Test
+    @MainActor
+    func officialHarnessVersionServiceRejectsMalformedVersion() async throws {
+        let endpoint = URL(string: "https://updates.example.com/npm-dsh-invalid")!
+        URLProtocolStub.responses = [
+            endpoint: (200, Data(#"{"version":"0.1.1rc.2"}"#.utf8))
+        ]
+        defer { URLProtocolStub.responses = [:] }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let service = OfficialHarnessVersionService(
+            environment: ["HARNESS_OFFICIAL_VERSION_URL": endpoint.absoluteString],
+            session: URLSession(configuration: configuration)
+        )
+
+        await #expect(throws: OfficialHarnessVersionError.invalidVersion) {
+            try await service.check()
+        }
+    }
+
+    @Test
+    @MainActor
     func appUpdateServiceChecksGitHubRelease() async throws {
         let feedURL = URL(string: "https://updates.example.com/app/latest")!
         let payload = Data(#"""

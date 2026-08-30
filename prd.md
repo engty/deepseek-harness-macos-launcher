@@ -489,7 +489,8 @@ Harness bundle 通常不是独立 daemon，因此 Stop 不是结束独立插件�
 - **Stable**：默认通道，建议每周聚合经过验证的上游版本；安全修复可立即发布。
 - **Preview**：面向主动测试用户，可每日跟进上游，但仍必须完成构建和 Launcher 自身预检。
 - App 启动并进入 Harness UI 后再异步检查更新，之后最多每 6 小时检查一次。
-- 检查使用带 ETag 的静态 HTTPS manifest，不需要设备唯一 ID；manifest 不使用公钥签名，feed 管理权是主要信任边界。
+- Runtime artifact 检查使用受控 HTTPS manifest，不需要设备唯一 ID；manifest 不使用公钥签名，feed 管理权是主要信任边界。
+- 当 artifact feed 尚未发布对应包时，Launcher 额外查询官方 npm 的 `@deepseek-ai/dsh` 最新版本，向用户提示官方版本变化，但绝不把普通 npm tarball 当作可安装 Runtime。
 - 自动检查不等于自动激活；默认必须由用户确认。
 - 可后台下载，但不得在活跃 Harness 任务中切换 Runtime。
 

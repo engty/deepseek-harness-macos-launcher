@@ -78,7 +78,7 @@ struct ContentView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(model.isOperationInProgress)
-                .help("下载 DeepSeek Harness 更新")
+                .help(model.runtimeUpdateHelpText)
             }
         }
         .fixedSize(horizontal: true, vertical: false)

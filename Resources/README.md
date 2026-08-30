@@ -90,7 +90,10 @@ Models provider use the same credential. The project has no credential server,
 telemetry, or remote synchronization service. Keys are not committed to the
 repository and are redacted from operation logs and diagnostic exports.
 
-The macOS App update menu checks the outer launcher release on GitHub. The
-version-adjacent download button is a separate channel for the embedded
-DeepSeek Harness Runtime and requires the controlled HTTPS Runtime manifest
-described in `prd.md`.
+The macOS App update menu checks the outer launcher release on GitHub. Runtime
+checks also query the official `@deepseek-ai/dsh` npm version so a newly
+published Harness release is not missed when the controlled artifact feed is
+temporarily unavailable. The version-adjacent download button is a separate
+channel for the embedded DeepSeek Harness Runtime and is actionable only when
+the corresponding controlled HTTPS manifest and SHA-256-verified artifact are
+available. A registry version signal alone never installs a raw npm tarball.

@@ -53,6 +53,9 @@ enum RuntimeUpdateState: Equatable {
     case idle
     case checking
     case available(String)
+    /// The official npm registry has a newer Harness version, but this App
+    /// does not yet have a corresponding hash-verified Runtime bundle.
+    case officialAvailable(String)
     case downloaded(String)
     case upToDate
     case failed(String)
