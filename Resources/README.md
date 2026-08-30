@@ -10,8 +10,10 @@ Resources/runtime/
   dsh/
   node_modules/
     .bin/pnpm
+  bin/
+    mnemon              # pinned Mnemon Native CLI for dsh-mnemon
   default-profile/
-    profiles/web/       # fresh-install profile: dsh1024 + better-dsh-pet
+    profiles/web/       # fresh-install profile: dsh1024 + better-dsh-pet + dsh-mnemon
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -37,7 +39,10 @@ machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
-(`0.5.0`) and `better-dsh-pet` (`0.3.5`). The pet is disabled by default and
+(`0.5.0`), `better-dsh-pet` (`0.3.5`) and `dsh-mnemon` (`0.3.5`).
+The bundle carries a checksum-verified, architecture-matched Mnemon Native
+CLI (`0.2.5`) under `runtime/bin`; it is visible only to Harness child
+processes and is not installed into the user's global PATH. The pet is disabled by default and
 can be enabled from `插件 → 桌宠 → 显示桌宠`. Its bubble size supports 40%–120%
 (default 100%). On first launch, the Launcher
 copies that profile into the App-owned `$DSH_HOME` only when no user profile

@@ -65,6 +65,7 @@ final class RuntimePreflightService {
         var environment = ProcessInfo.processInfo.environment
         environment["DSH_HOME"] = dshHome.path
         environment["DSH_LAUNCHER"] = "DeepSeekHarness"
+        environment["MNEMON_DATA_DIR"] = dshHome.appendingPathComponent("mnemon", isDirectory: true).path
         environment["PATH"] = PluginDependencyService(
             environment: environment,
             privateToolchainRoot: paths.toolchain

@@ -64,6 +64,28 @@ struct PluginDependencyServiceTests {
     }
 
     @Test
+    func exposesRuntimeOwnedNativeHelpersBeforeSystemPath() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let pnpm = root.appendingPathComponent("runtime/node_modules/.bin/pnpm")
+        try makeExecutable(pnpm)
+        let installation = RuntimeInstallation(
+            executable: root.appendingPathComponent("runtime/dsh"),
+            root: root.appendingPathComponent("runtime"),
+            version: nil,
+            nodeExecutable: nil
+        )
+        let plan = try PluginDependencyService(environment: ["PATH": "/usr/bin:/bin"]).resolve(
+            installation: installation,
+            arguments: ["add", "dsh-mnemon"]
+        )
+
+        #expect(plan.searchPath.contains(installation.root.appendingPathComponent("bin").path))
+        #expect(plan.searchPath.contains("/usr/bin"))
+    }
+
+    @Test
     func gitHostedPluginDeclaresGitAndCurlInConfirmationPlan() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

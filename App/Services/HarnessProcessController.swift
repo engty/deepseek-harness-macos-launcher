@@ -84,8 +84,14 @@ final class HarnessProcessController {
         process.standardError = errorPipe
 
         var environment = ProcessInfo.processInfo.environment
-        environment["DSH_HOME"] = (dshHomeOverride ?? paths.dshHome).path
+        let harnessHome = dshHomeOverride ?? paths.dshHome
+        environment["DSH_HOME"] = harnessHome.path
         environment["DSH_LAUNCHER"] = "DeepSeekHarness"
+        // dsh-mnemon defaults to ~/.mnemon outside a configured scope. Force
+        // its local memory store inside the App-owned DSH_HOME so launcher
+        // installs remain self-contained and never inherit a user's global
+        // Mnemon data directory.
+        environment["MNEMON_DATA_DIR"] = harnessHome.appendingPathComponent("mnemon", isDirectory: true).path
         environment["PATH"] = PluginDependencyService(
             environment: environment,
             privateToolchainRoot: paths.toolchain

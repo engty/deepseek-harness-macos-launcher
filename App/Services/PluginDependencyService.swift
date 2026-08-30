@@ -242,6 +242,10 @@ struct PluginDependencyService {
         if let nodeDirectory = installation.nodeExecutable?.deletingLastPathComponent().path {
             directories.append(nodeDirectory)
         }
+        // Runtime-owned native helpers (for example dsh-mnemon's bundled
+        // Mnemon CLI) must be visible to Harness and plugins without falling
+        // back to the user's global PATH.
+        directories.append(installation.root.appendingPathComponent("bin", isDirectory: true).path)
         if let privateToolchainRoot {
             directories.append(contentsOf: privateToolchainBinDirectories(root: privateToolchainRoot))
         }

@@ -108,7 +108,8 @@ final class PluginCommandRunner {
                 plan: dependencyPlan,
                 additions: [
                     "DSH_HOME": stagingHome.path,
-                    "DSH_LAUNCHER": "DeepSeekHarness"
+                    "DSH_LAUNCHER": "DeepSeekHarness",
+                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
                 ]
             ),
             currentDirectory: stagingProfile,
@@ -134,7 +135,8 @@ final class PluginCommandRunner {
                 plan: dependencyPlan,
                 additions: [
                     "DSH_HOME": stagingHome.path,
-                    "DSH_LAUNCHER": "DeepSeekHarness"
+                    "DSH_LAUNCHER": "DeepSeekHarness",
+                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
                 ]
             ),
             currentDirectory: stagingProfile,

@@ -38,6 +38,21 @@ the upstream package README and license.
 - Upstream repository: <https://github.com/ysppwn721/better-dsh-pet>
 - macOS reference port: <https://github.com/williamhadeslee/better-dsh-pet-macos>
 
+## dsh-mnemon and Mnemon Native
+
+The fresh-install Runtime profile includes `dsh-mnemon@0.3.5`, installed
+through the standard Harness plugin registry. The Runtime Bundle also carries
+the architecture-specific `mnemon` Native CLI `0.2.5`; the release workflow
+downloads the official archive and verifies its upstream SHA-256 checksum
+before placing it under the App Runtime. The launcher does not install this
+binary globally.
+
+- dsh-mnemon repository: <https://github.com/omdsh-dev/dsh-mnemon>
+- dsh-mnemon license: MIT
+- Mnemon Native repository: <https://github.com/mnemon-dev/mnemon>
+- Mnemon Native release: <https://github.com/mnemon-dev/mnemon/releases/tag/v0.2.5>
+- Mnemon Native license: MIT
+
 ## Other dependencies
 
 Node.js, Swift, SwiftUI, AppKit, WebKit, pnpm, and transitive npm packages are
