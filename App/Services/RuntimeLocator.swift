@@ -85,13 +85,17 @@ struct RuntimeLocator {
             candidates.append(contentsOf: executableCandidates(root: root).map { ($0, root) })
         }
 
-        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime", isDirectory: true) {
-            candidates.append(contentsOf: executableCandidates(root: bundled).map { ($0, bundled) })
-        }
-
         let paths = applicationSupportCandidates()
         for root in paths {
             candidates.append(contentsOf: executableCandidates(root: root).map { ($0, root) })
+        }
+
+        // A successfully activated Runtime in Application Support must win
+        // over the older copy embedded in the App bundle. Without this order,
+        // every update would appear to succeed but the next launch would
+        // silently start the original bundled version again.
+        if let bundled = Bundle.main.resourceURL?.appendingPathComponent("runtime", isDirectory: true) {
+            candidates.append(contentsOf: executableCandidates(root: bundled).map { ($0, bundled) })
         }
 
         if let pathExecutable = executableOnPath(named: "dsh") {

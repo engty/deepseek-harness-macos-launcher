@@ -91,9 +91,13 @@ telemetry, or remote synchronization service. Keys are not committed to the
 repository and are redacted from operation logs and diagnostic exports.
 
 The macOS App update menu checks the outer launcher release on GitHub. Runtime
-checks also query the official `@deepseek-ai/dsh` npm version so a newly
+checks query every valid SemVer published for the official
+`@deepseek-ai/dsh` npm package, including `rc` and `beta` builds, so a newly
 published Harness release is not missed when the controlled artifact feed is
-temporarily unavailable. The version-adjacent download button is a separate
-channel for the embedded DeepSeek Harness Runtime and is actionable only when
-the corresponding controlled HTTPS manifest and SHA-256-verified artifact are
-available. A registry version signal alone never installs a raw npm tarball.
+temporarily unavailable. The version-adjacent download button rebuilds a full
+Runtime in the App-owned cache with the bundled pnpm, then verifies the exact
+version, archive size/hash, and launch preflight before activation. It never
+overwrites the Runtime with a bare npm tarball, never writes to global
+Node/pnpm, and never changes the user's plugin profile. When a controlled
+HTTPS manifest is available, that hash-verified artifact remains the preferred
+update channel.

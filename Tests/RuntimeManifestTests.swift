@@ -132,7 +132,7 @@ struct RuntimeManifestTests {
         URLProtocolStub.responses = [
             endpoint: (
                 200,
-                Data(#"{"name":"@deepseek-ai/dsh","version":"0.1.1-rc.2"}"#.utf8)
+                Data(#"{"versions":{"0.1.0-rc.6":{},"0.1.1-rc.2":{},"0.1.1-rc.3":{}}}"#.utf8)
             )
         ]
         defer { URLProtocolStub.responses = [:] }
@@ -145,9 +145,9 @@ struct RuntimeManifestTests {
         )
 
         let result = try await service.check()
-        #expect(result.version == "0.1.1-rc.2")
+        #expect(result.version == "0.1.1-rc.3")
         #expect(result.isUpdateAvailable(currentHarnessVersion: "0.1.0-rc.6"))
-        #expect(!result.isUpdateAvailable(currentHarnessVersion: "0.1.1-rc.2"))
+        #expect(!result.isUpdateAvailable(currentHarnessVersion: "0.1.1-rc.3"))
     }
 
     @Test

@@ -26,7 +26,7 @@
    桌宠的 macOS 适配层由本项目在构建时应用到上游包；气泡大小支持 40%–120%，默认 100%。macOS 语音播报使用系统 `/usr/bin/say`，默认使用 `Yue (Premium)`（月）高级中文音色，未安装时自动回退到系统默认音色，不上传音频；上游依赖 Windows SAPI 的麦克风识别入口在 macOS 版保持关闭。首次显示桌宠时才会把固定版本 Electron 下载到 App 私有 DSH_HOME，并校验 SHA-256，不安装到系统全局目录。
    需要识图时可按官方标准方式安装 `@anionex/dsh-vision-toolkit`：
    `dsh plugin --profile web add @anionex/dsh-vision-toolkit`。它会在 App 私有目录准备隔离的 Python、Pillow、NumPy 和 vtracer，不写入系统 Python；首次启动视觉插件可能需要几分钟准备依赖，启动器会等待其完成。
-6. **更新**：App 启动后会自动查询官方 Harness 版本，并定期检查。检测到新版时会主动提示；如果对应的、经过 SHA-256 校验的 Runtime 安装包已经发布，右上角会显示下载按钮，确认后升级，失败自动回退。仅检测到官方 npm 新版本但安装包尚未准备好时，App 会明确提示，不会把普通 npm 包直接当作完整 Runtime 安装。`设置 → 检查 Harness 更新…` 可随时手动检查，`设置 → 检查 DeepSeek Harness 更新…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
+6. **更新**：App 启动后会自动查询官方 Harness npm 的所有可识别 SemVer 版本（包含 `rc`、`beta` 等测试版本），并定期检查。检测到新版时会主动提示，右上角下载按钮会在 App 私有目录用内置 pnpm 重建完整 Runtime（不会把裸 npm 包直接覆盖运行时），确认后执行版本、启动和当前插件 profile 预检，再原子切换；失败自动回退。若配置了受控 Runtime manifest，则优先使用其中经过 SHA-256 校验的 artifact。`设置 → 检查 Harness 更新…` 可随时手动检查，`设置 → 检查 DeepSeek Harness 更新…` 检查外壳自身更新。无更新时右上角显示按北京时间计算的折扣倍率：工作日 9:00–12:00、14:00–18:00 为 `1.0x`，其余时间为 `0.5x`。
 
 ## 安全性
 

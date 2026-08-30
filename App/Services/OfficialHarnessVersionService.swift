@@ -40,7 +40,7 @@ enum OfficialHarnessVersionError: LocalizedError, Equatable {
 @MainActor
 final class OfficialHarnessVersionService {
     private static let defaultURL = URL(
-        string: "https://registry.npmjs.org/@deepseek-ai%2Fdsh/latest"
+        string: "https://registry.npmjs.org/@deepseek-ai%2Fdsh"
     )!
     private static let packageURL = URL(
         string: "https://www.npmjs.com/package/@deepseek-ai/dsh"
@@ -85,13 +85,21 @@ final class OfficialHarnessVersionService {
             throw OfficialHarnessVersionError.invalidResponse
         }
 
-        let payload: LatestPackagePayload
+        let payload: PackageMetadataPayload
         do {
-            payload = try JSONDecoder().decode(LatestPackagePayload.self, from: data)
+            payload = try JSONDecoder().decode(PackageMetadataPayload.self, from: data)
         } catch {
             throw OfficialHarnessVersionError.invalidJSON
         }
-        guard let version = StrictSemanticVersion(rawValue: payload.version)?.description else {
+
+        // Choose the highest valid SemVer from every published npm version.
+        // Do not rely on the `latest` dist-tag: early Harness releases are
+        // deliberately published as rc/beta builds while the project is in
+        // Developer Preview.
+        let candidates = payload.versions?.keys.compactMap(StrictSemanticVersion.init)
+            ?? payload.version.flatMap { StrictSemanticVersion(rawValue: $0).map { [$0] } }
+            ?? []
+        guard let version = candidates.max()?.description else {
             throw OfficialHarnessVersionError.invalidVersion
         }
 
@@ -99,6 +107,13 @@ final class OfficialHarnessVersionService {
     }
 }
 
-private struct LatestPackagePayload: Decodable {
-    let version: String
+private struct PackageMetadataPayload: Decodable {
+    /// Present when a test endpoint or the `/latest` compatibility endpoint
+    /// returns a single package record.
+    let version: String?
+    /// Full npm metadata contains every published version, including
+    /// prereleases that are not selected by the `latest` dist-tag.
+    let versions: [String: PackageVersionMetadata]?
 }
+
+private struct PackageVersionMetadata: Decodable {}
