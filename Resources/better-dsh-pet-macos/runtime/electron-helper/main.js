@@ -43,7 +43,12 @@ function loadSavedPosition() {
   try {
     const value = JSON.parse(readFileSync(positionFilePath(), 'utf8'))
     if (Number.isFinite(value?.x) && Number.isFinite(value?.y)) {
-      return { x: Number(value.x), y: Number(value.y) }
+      return {
+        x: Number(value.x),
+        y: Number(value.y),
+        width: Number.isFinite(value.width) ? Number(value.width) : null,
+        height: Number.isFinite(value.height) ? Number(value.height) : null,
+      }
     }
   } catch {
     // 首次启动或旧文件损坏时使用默认位置。
@@ -60,6 +65,8 @@ function savePosition(position) {
     writeFileSync(temporary, JSON.stringify({
       x: Number(position.x),
       y: Number(position.y),
+      width: Number.isFinite(position.width) ? Number(position.width) : null,
+      height: Number.isFinite(position.height) ? Number(position.height) : null,
     }), { encoding: 'utf8', mode: 0o600 })
     renameSync(temporary, target)
   } catch (error) {
@@ -233,6 +240,8 @@ function createWindow() {
       bubbleScale: String(bubbleScale),
       positionX: String(savedPosition?.x ?? ''),
       positionY: String(savedPosition?.y ?? ''),
+      positionWidth: String(savedPosition?.width ?? ''),
+      positionHeight: String(savedPosition?.height ?? ''),
       voiceEnabled: process.env.DSH_PET_VOICE_ENABLED === '0' ? '0' : '1',
       activityLevel: process.env.DSH_PET_ACTIVITY_LEVEL || 'normal',
       reducedMotion: process.env.DSH_PET_REDUCED_MOTION === '1' ? '1' : '0',

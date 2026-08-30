@@ -141,6 +141,14 @@ final class LauncherModel: ObservableObject {
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
             try defaultProfileInstaller.seedIfNeeded(paths: paths, runtimeRoot: installation.root)
+            // Existing profiles survive App updates. Refresh only the pinned
+            // better-dsh-pet 0.3.5 platform files so old Windows helper code
+            // cannot remain active on macOS; unrelated plugin files/settings
+            // are left untouched.
+            _ = try defaultProfileInstaller.syncBetterDshPetAdapter(
+                paths: paths,
+                runtimeRoot: installation.root
+            )
             let url = try await processController.start(
                 installation: installation,
                 paths: paths,

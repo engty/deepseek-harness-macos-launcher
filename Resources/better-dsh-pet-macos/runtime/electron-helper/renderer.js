@@ -35,6 +35,13 @@ const CONFIG = {
   actionDelayMs: Number(params.get('actionDelayMs') || '0'),
 }
 
+const savedPosition = {
+  x: numberParam('positionX'),
+  y: numberParam('positionY'),
+  width: numberParam('positionWidth'),
+  height: numberParam('positionHeight'),
+}
+
 // ---------- 资源根 ----------
 const ASSET_BASE = new URL('../../assets/thumb/', location.href).href
 const ALARM_URL = new URL('../../assets/alarm.mp3', location.href).href
@@ -177,9 +184,18 @@ if (CONFIG.reducedMotion) {
 }
 
 // 全屏透明画布内，宠物初始放在右下角；拖拽时只移动这个 DOM，不移动窗口。
+function restoreAxis(value, savedSize, currentSize, fallback) {
+  if (!Number.isFinite(value)) return fallback
+  if (Number.isFinite(savedSize) && savedSize > 0 && currentSize > 0
+      && Math.abs(savedSize - currentSize) > 1) {
+    return value * currentSize / savedSize
+  }
+  return value
+}
+
 let petPos = {
-  x: numberParam('positionX') ?? (window.innerWidth - size - 24),
-  y: numberParam('positionY') ?? (window.innerHeight - size * 9 / 16 - 24),
+  x: restoreAxis(savedPosition.x, savedPosition.width, window.innerWidth, window.innerWidth - size - 24),
+  y: restoreAxis(savedPosition.y, savedPosition.height, window.innerHeight, window.innerHeight - size * 9 / 16 - 24),
 }
 function applyPetPosition() {
   rootEl.style.left = petPos.x + 'px'
@@ -857,8 +873,12 @@ function moveDrag(e) {
     showManualBubble('大肥鱼被拎起来啦！', '快放我下来~', 3000)
   }
   // 在全屏透明画布内移动宠物 DOM，避免移动窗口导致的指针事件问题。
-  const dx = e.movementX || 0
-  const dy = e.movementY || 0
+  // 使用相邻 screenX/screenY 的差值，避免不同 Retina 缩放下 movementX/Y
+  // 采用物理像素导致保存位置与视觉位置不一致。
+  const dx = e.screenX - d.lastX
+  const dy = e.screenY - d.lastY
+  d.lastX = e.screenX
+  d.lastY = e.screenY
   if (dx || dy) {
     // 按角色实际命中区域贴边，而不是按整个透明舞台贴边，
     // 这样宠物可以真正拖到屏幕最左/最右。
@@ -886,7 +906,12 @@ function endDrag(e) {
   }
   if (wasDragging) {
     // 只在用户实际拖动结束时保存；桌宠自己的待机走动不会覆盖用户位置。
-    window.petBridge.savePosition({ x: petPos.x, y: petPos.y })
+    window.petBridge.savePosition({
+      x: petPos.x,
+      y: petPos.y,
+      width: window.innerWidth,
+      height: window.innerHeight,
+    })
     justDragged = true
     setTimeout(() => { justDragged = false }, 100)
     applyResume()

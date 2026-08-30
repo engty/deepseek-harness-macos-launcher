@@ -372,6 +372,52 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func refreshesBundledBetterDshPetAdapterWithoutReplacingUserProfile() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        let bundledPackage = runtimeRoot
+            .appendingPathComponent("default-profile/profiles/web/node_modules/better-dsh-pet", isDirectory: true)
+        let activePackage = paths.profileWeb
+            .appendingPathComponent("node_modules/better-dsh-pet", isDirectory: true)
+        try fileManager.createDirectory(at: bundledPackage, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: activePackage, withIntermediateDirectories: true)
+        let manifest = #"{"name":"better-dsh-pet","version":"0.3.5"}"#
+        try Data(manifest.utf8).write(to: bundledPackage.appendingPathComponent("package.json"))
+        try Data(manifest.utf8).write(to: activePackage.appendingPathComponent("package.json"))
+        let sourceMain = bundledPackage.appendingPathComponent("runtime/electron-helper/main.js")
+        let activeMain = activePackage.appendingPathComponent("runtime/electron-helper/main.js")
+        try fileManager.createDirectory(at: sourceMain.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: activeMain.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("new-adapter".utf8).write(to: sourceMain)
+        try Data("old-adapter".utf8).write(to: activeMain)
+        let requiredFiles = [
+            "lib/index.js", "lib/client.js", "lib/pet-helper-process.js",
+            "runtime/electron-helper/preload.js", "runtime/electron-helper/renderer.js",
+            "scripts/ensure-electron.mjs", "cordis.patch.yml"
+        ]
+        for relativePath in requiredFiles {
+            let source = bundledPackage.appendingPathComponent(relativePath)
+            try fileManager.createDirectory(at: source.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data("adapter".utf8).write(to: source)
+        }
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.syncBetterDshPetAdapter(paths: paths, runtimeRoot: runtimeRoot))
+        #expect(String(decoding: try Data(contentsOf: activeMain), as: UTF8.self) == "new-adapter")
+        #expect(String(decoding: try Data(contentsOf: activePackage.appendingPathComponent("package.json")), as: UTF8.self).contains("0.3.5"))
+    }
+
+    @Test
     @MainActor
     func rejectsRuntimeArchiveSymlinkEscapingStagingRoot() async throws {
         let fileManager = FileManager.default
