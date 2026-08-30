@@ -47,8 +47,12 @@ not undone on restart.
 On macOS, the build applies the reviewed adapter in
 `Resources/better-dsh-pet-macos` to the upstream npm package. The desktop
 helper downloads the pinned Electron archive only when the user first shows
-the pet, stores it under the App-owned DSH_HOME, and verifies its SHA-256. It
-does not use a global Electron or alter the user's shell PATH.
+the pet, stores it under the App-owned DSH_HOME, and verifies its SHA-256. Its
+optional voice output uses macOS `/usr/bin/say` and does not upload audio. The
+upstream microphone recognition depends on Windows SAPI or a separately
+downloaded SenseVoice model, so that input path remains unavailable in this
+macOS adapter. It does not use a global Electron or alter the user's shell
+PATH.
 
 The Launcher also supports standard third-party plugins such as
 `@anionex/dsh-vision-toolkit`. Install it from the App's plugin menu with the

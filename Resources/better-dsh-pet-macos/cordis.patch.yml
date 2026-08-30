@@ -16,6 +16,7 @@
         includeSubagents: false
         workMinutes: 25
         breakMinutes: 5
+        voiceEnabled: true
         roastEnabled: false
         walkEnabled: true
         enabledActions: []

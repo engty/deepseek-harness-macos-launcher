@@ -57,6 +57,7 @@ fi
 /usr/bin/perl -0pi -e "s/type: 'range', min: 0\\.8, max: 1\\.2/type: 'range', min: 0.4, max: 1.2/" "$CLIENT_FILE"
 /usr/bin/perl -0pi -e 's/气泡大小（0\.8～1\.2）/气泡大小（0.4～1.2）/g; s/气泡大小（80%～120%）/气泡大小（40%～120%）/g' \
   "$PACKAGE_ROOT/lib/types/index.d.ts" "$PACKAGE_ROOT/README.md" 2>/dev/null || true
+/usr/bin/perl -0pi -e "s/label: '启用语音功能', hint: '关闭后隐藏所有麦克风\\/语音唤醒入口，保护隐私。'/label: '启用语音播报', hint: '关闭后不再朗读互动回复和任务结果。'/" "$CLIENT_FILE"
 if ! grep -Fq "type: 'range', min: 0.4, max: 1.2" "$CLIENT_FILE"; then
   echo "better-dsh-pet 配置面板滑块未成功设置为 40% 下限。" >&2
   exit 1

@@ -11,6 +11,7 @@ const CONFIG = {
   enabled: params.get('enabled') !== '0',
   scale: Number(params.get('scale') || '1'),
   bubbleScale: Number(params.get('bubbleScale') || '1'),
+  voiceEnabled: params.get('voiceEnabled') !== '0',
   activityLevel: params.get('activityLevel') || 'normal',
   reducedMotion: params.get('reducedMotion') === '1',
   bubbleMode: params.get('bubbleMode') || 'always',
@@ -211,6 +212,8 @@ let roast = null
 let lastRoast = null
 let manualBubble = null
 let manualBubbleTimer = null
+let lastSpokenText = ''
+let lastSpokenAt = 0
 let pomodoro = null
 let pomodoroTimer = null
 let menuPage = 'main'
@@ -226,6 +229,17 @@ const randomBetween = (min, max) => Math.floor(min + Math.random() * (max - min)
 const pick = (pool, exclude) => {
   const entries = exclude ? pool.filter((n) => n !== exclude) : pool
   return entries[Math.floor(Math.random() * entries.length)]
+}
+
+function speakText(text) {
+  if (CONFIG.voiceEnabled === false || typeof window.petBridge?.speak !== 'function') return
+  const normalized = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240)
+  if (!normalized) return
+  const now = Date.now()
+  if (normalized === lastSpokenText && now - lastSpokenAt < 3000) return
+  lastSpokenText = normalized
+  lastSpokenAt = now
+  window.petBridge.speak(normalized)
 }
 
 function assetUrl(name) {
@@ -352,7 +366,7 @@ function playClick() {
   animOnce = true
   animLoop = false
   switchTo(next, { once: true })
-  showManualBubble(CLICK_COPY[next] || '大肥鱼被戳了一下~', '大肥鱼的小剧场~', 2500)
+  showManualBubble(CLICK_COPY[next] || '大肥鱼被戳了一下~', '大肥鱼的小剧场~', 2500, true)
 }
 
 function playDrag() {
@@ -572,6 +586,7 @@ function applyPulseMessage(message) {
   }
   lastPulseKey = `${state}:${message.expiresAt || message.ttlMs || 1800}`
   currentState = state
+  if (message.message || message.detail) speakText(message.message || message.detail)
   if (state === 'SUCCESS') {
     window.petBridge.beep()
     shakePet()
@@ -600,7 +615,7 @@ function applyTasksMessage(message) {
 }
 
 // ---------- 喂食/互动反馈 ----------
-function showManualBubble(message, detail, ttl = 2200) {
+function showManualBubble(message, detail, ttl = 2200, announce = false) {
   if (manualBubbleTimer) clearTimeout(manualBubbleTimer)
   manualBubble = { message, detail, expiresAt: Date.now() + ttl }
   manualBubbleTimer = setTimeout(() => {
@@ -608,6 +623,7 @@ function showManualBubble(message, detail, ttl = 2200) {
     manualBubbleTimer = null
     updateBubble()
   }, ttl)
+  if (announce) speakText(message)
   updateBubble()
 }
 
@@ -619,7 +635,7 @@ function feedPet() {
   animLoop = false
   currentMode = 'click' // 复用“一次性动画播完回当前状态”的路径
   switchTo(next, { once: true })
-  showManualBubble('谢谢投喂大肥鱼~', '吃饱了更有力气干活！', 2200)
+  showManualBubble('谢谢投喂大肥鱼~', '吃饱了更有力气干活！', 2200, true)
 }
 
 function shakePet() {
@@ -1265,6 +1281,7 @@ function applyStatus(incoming) {
     CONFIG.bubbleMode = incoming.config.bubbleMode || CONFIG.bubbleMode
     CONFIG.bubbleStates = Array.isArray(incoming.config.bubbleStates) ? incoming.config.bubbleStates : CONFIG.bubbleStates
     CONFIG.reducedMotion = incoming.config.reducedMotion === true
+    CONFIG.voiceEnabled = incoming.config.voiceEnabled !== false
     CONFIG.activityLevel = incoming.config.activityLevel || CONFIG.activityLevel
     CONFIG.bubbleScale = Number(incoming.config.bubbleScale || CONFIG.bubbleScale)
     CONFIG.workMinutes = Number(incoming.config.workMinutes) || CONFIG.workMinutes

@@ -7,7 +7,7 @@
  */
 const { app, BrowserWindow, ipcMain, screen, shell } = require('electron')
 const path = require('node:path')
-const { spawn } = require('node:child_process')
+const { spawn, execFile } = require('node:child_process')
 const { existsSync } = require('node:fs')
 
 // 允许无用户手势直接播放 MP3 闹钟
@@ -20,6 +20,28 @@ if (process.platform === 'darwin' && app.dock) {
 
 let mainWindow = null
 let pollTimer = null
+let speechProcess = null
+let speechGeneration = 0
+
+// Windows 版使用 System.Speech；macOS 用系统自带的 say，避免再引入一套
+// 语音引擎或把音频上传到网络。参数通过 execFile 数组传递，不经过 shell。
+function speakText(text) {
+  if (process.platform !== 'darwin' || process.env.DSH_PET_VOICE_ENABLED === '0') return
+  const safeText = String(text || '').replace(/\s+/g, ' ').trim().slice(0, 240)
+  if (!safeText) return
+  if (speechProcess && !speechProcess.killed) speechProcess.kill('SIGTERM')
+  const generation = ++speechGeneration
+  const voice = process.env.DSH_PET_VOICE_NAME || 'Tingting'
+  const launch = (args, allowFallback) => {
+    const child = execFile('/usr/bin/say', args, { timeout: 15000 }, (error) => {
+      if (speechProcess === child) speechProcess = null
+      // 用户未安装指定中文音色时，退回系统默认音色。
+      if (error && allowFallback && generation === speechGeneration) launch([safeText], false)
+    })
+    speechProcess = child
+  }
+  launch(['-v', voice, safeText], true)
+}
 
 // macOS 点击穿透方案：
 // setIgnoreMouseEvents 的 { forward: true } 只有 Windows 支持，macOS 上窗口一旦
@@ -163,6 +185,7 @@ function createWindow() {
     query: {
       scale: String(scale),
       bubbleScale: String(bubbleScale),
+      voiceEnabled: process.env.DSH_PET_VOICE_ENABLED === '0' ? '0' : '1',
       activityLevel: process.env.DSH_PET_ACTIVITY_LEVEL || 'normal',
       reducedMotion: process.env.DSH_PET_REDUCED_MOTION === '1' ? '1' : '0',
       bubbleMode: process.env.DSH_PET_BUBBLE_MODE || 'always',
@@ -248,6 +271,9 @@ app.whenReady().then(() => {
   ipcMain.on('pet:beep', () => {
     try { shell.beep() } catch { /* 系统不支持时忽略 */ }
   })
+  ipcMain.on('pet:speak', (_event, text) => {
+    speakText(text)
+  })
   ipcMain.on('pet:save-config', async (_event, patch) => {
     const statusUrl = process.env.DSH_PET_STATUS_URL
     if (!statusUrl || !patch || typeof patch !== 'object') return
@@ -294,5 +320,12 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  speechGeneration++
+  if (speechProcess && !speechProcess.killed) speechProcess.kill('SIGTERM')
   app.quit()
+})
+
+app.on('before-quit', () => {
+  speechGeneration++
+  if (speechProcess && !speechProcess.killed) speechProcess.kill('SIGTERM')
 })
