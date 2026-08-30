@@ -167,6 +167,20 @@ final class LauncherModel: ObservableObject {
                 paths: paths,
                 runtimeVersion: installation.version
             )
+            // Fixed-model Mnemon reviews use the inherited fork context, so
+            // sanitize only that child seed when the Runtime supports it.
+            // Keep startup resilient if an old app bundle is not writable;
+            // newly packaged Runtimes apply the same patch during assembly.
+            do {
+                _ = try defaultProfileInstaller.syncDshMnemonTextOnlyReviewCompatibility(
+                    paths: paths,
+                    runtimeRoot: installation.root
+                )
+            } catch {
+                AppLogger.plugins.error(
+                    "Could not apply fixed-model Mnemon image filtering: \(error.localizedDescription, privacy: .public)"
+                )
+            }
             let url = try await processController.start(
                 installation: installation,
                 paths: paths,
@@ -1143,6 +1157,13 @@ final class LauncherModel: ObservableObject {
                     isDirectory: true
                 ),
                 runtimeVersion: newActivation.installation.version ?? manifest.harness.version
+            )
+            _ = try defaultProfileInstaller.syncDshMnemonTextOnlyReviewCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                ),
+                runtimeRoot: newActivation.installation.root
             )
             runtimeUpdateStage = .testing
             let candidateController = HarnessProcessController()

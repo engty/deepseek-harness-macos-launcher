@@ -138,6 +138,89 @@ struct DefaultProfileInstaller {
         return true
     }
 
+    /// Keeps fixed-model Mnemon reviews text-only. The fork provider normally
+    /// inherits the completed parent session, including durable image blocks.
+    /// A fixed model may use a text-only adapter even when the model itself can
+    /// accept images, so only the review fork receives a sanitized seed. The
+    /// parent session and follow-main-chain operations are left untouched.
+    @discardableResult
+    func syncDshMnemonTextOnlyReviewCompatibility(
+        paths: AppPaths,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        try syncDshMnemonTextOnlyReviewCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        )
+    }
+
+    /// Applies the review-only bridge to a profile and its matching Runtime.
+    /// Both files are patched in place because the profile package and fork
+    /// provider are loaded by separate module resolvers at Harness startup.
+    @discardableResult
+    func syncDshMnemonTextOnlyReviewCompatibility(
+        profileWeb: URL,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        let mnemonPackage = profileWeb
+            .appendingPathComponent("node_modules/dsh-mnemon", isDirectory: true)
+            .resolvingSymlinksInPath()
+        let mnemonManifest = mnemonPackage.appendingPathComponent("package.json")
+        guard fileManager.fileExists(atPath: mnemonManifest.path),
+              let identity = packageNameAndVersion(at: mnemonManifest),
+              identity.0 == "dsh-mnemon" else {
+            return false
+        }
+
+        let forkPackage = runtimeRoot
+            .appendingPathComponent(
+                "node_modules/@deepseek-ai/dsh-subagent-fork-in-process",
+                isDirectory: true
+            )
+            .resolvingSymlinksInPath()
+        let mnemonSourceURL = mnemonPackage.appendingPathComponent("lib/index.js")
+        let forkSourceURL = forkPackage.appendingPathComponent("lib/index.js")
+        guard let mnemonSource = try? String(contentsOf: mnemonSourceURL, encoding: .utf8),
+              let forkSource = try? String(contentsOf: forkSourceURL, encoding: .utf8) else {
+            return false
+        }
+
+        let patchedMnemon: String
+        if mnemonSource.contains("dshMnemonTextOnly: true") {
+            patchedMnemon = mnemonSource
+        } else if let adapted = Self.adaptDshMnemonTextOnlyReviewSource(mnemonSource) {
+            patchedMnemon = adapted
+        } else {
+            return false
+        }
+
+        let patchedFork: String
+        if forkSource.contains("mnemonForkSeed(request)") {
+            patchedFork = forkSource
+        } else if let adapted = Self.adaptDshMnemonForkSource(forkSource) {
+            patchedFork = adapted
+        } else {
+            return false
+        }
+
+        var changed = false
+        if patchedMnemon != mnemonSource {
+            try patchedMnemon.write(to: mnemonSourceURL, atomically: true, encoding: .utf8)
+            changed = true
+        }
+        if patchedFork != forkSource {
+            try patchedFork.write(to: forkSourceURL, atomically: true, encoding: .utf8)
+            changed = true
+        }
+
+        if changed {
+            AppLogger.plugins.info(
+                "Applied text-only image filtering for fixed-model dsh-mnemon reviews."
+            )
+        }
+        return changed
+    }
+
     private static func usesLegacyProjectionContract(_ runtimeVersion: String?) -> Bool {
         guard let runtimeVersion,
               let parsed = StrictSemanticVersion(rawValue: runtimeVersion),
@@ -172,6 +255,70 @@ struct DefaultProfileInstaller {
         return source
             .replacingOccurrences(of: legacySchema, with: modernStateSchema)
             .replacingOccurrences(of: legacyView, with: modernWire)
+    }
+
+    private static func adaptDshMnemonTextOnlyReviewSource(_ source: String) -> String? {
+        let marker = "dshMnemonTextOnly: true"
+        guard !source.contains(marker) else { return nil }
+
+        let original = """
+\t\t\tconst resolvedAgentOptions = fixed === void 0 ? baseAgentOptions : {
+\t\t\t\t...baseAgentOptions ?? {},
+\t\t\t\tprovider: fixed.provider,
+\t\t\t\tmodel: fixed.model
+\t\t\t};
+"""
+        let replacement = """
+\t\t\tconst resolvedAgentOptions = fixed === void 0 ? baseAgentOptions : {
+\t\t\t\t...baseAgentOptions ?? {},
+\t\t\t\t...operation === \"review\" ? { dshMnemonTextOnly: true } : {},
+\t\t\t\tprovider: fixed.provider,
+\t\t\t\tmodel: fixed.model
+\t\t\t};
+"""
+        guard source.contains(original) else { return nil }
+        return source.replacingOccurrences(of: original, with: replacement)
+    }
+
+    private static func adaptDshMnemonForkSource(_ source: String) -> String? {
+        let marker = "mnemonForkSeed(request)"
+        guard !source.contains(marker) else { return nil }
+
+        let classAnchor = "var ForkInProcessProvider = class {"
+        let seedAnchor = "const seed = completedTurnPrefix(request.parent);"
+        guard source.contains(classAnchor), source.components(separatedBy: seedAnchor).count == 3 else {
+            return nil
+        }
+
+        let helpers = """
+        function sanitizeMnemonForkValue(value) {
+        \tif (Array.isArray(value)) return value.map((item) => sanitizeMnemonForkValue(item));
+        \tif (value && typeof value === \"object\") {
+        \t\tif (!Array.isArray(value) && value.type === \"image\") {
+        \t\t\treturn { type: \"text\", text: \"[image content omitted from text-only Mnemon review]\" };
+        \t\t}
+        \t\treturn Object.fromEntries(Object.entries(value).map(([key, item]) => [key, sanitizeMnemonForkValue(item)]));
+        \t}
+        \treturn value;
+        }
+        function sanitizeMnemonForkSeed(seed) {
+        \treturn seed.map((event) => sanitizeMnemonForkValue(event));
+        }
+        function mnemonForkSeed(request) {
+        \tconst seed = completedTurnPrefix(request.parent);
+        \treturn request.agentOptions?.dshMnemonTextOnly === true ? sanitizeMnemonForkSeed(seed) : seed;
+        }
+        """
+        let replacedSeeds = source.replacingOccurrences(
+            of: seedAnchor,
+            with: "const seed = mnemonForkSeed(request);"
+        )
+        let withHelpers = replacedSeeds.replacingOccurrences(
+            of: classAnchor,
+            with: helpers + "\n" + classAnchor
+        )
+        guard withHelpers != source else { return nil }
+        return withHelpers
     }
 
     private func packageNameAndVersion(at manifest: URL) -> (String, String)? {

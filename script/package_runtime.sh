@@ -117,6 +117,11 @@ if [[ "$(uname -s)" == "Darwin" && " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" bett
   PET_PACKAGE="$DEFAULT_PROFILE_HOME/profiles/web/node_modules/better-dsh-pet"
   "$ROOT_DIR/script/patch_better_dsh_pet_macos.sh" "$PET_PACKAGE"
 fi
+# Fixed-model Mnemon reviews inherit the parent session through the fork
+# provider. Filter image blocks in that child seed while leaving normal
+# conversations and follow-main-chain reviews unchanged.
+HARNESS_PATCH_NODE_PATH="$STAGING_ROOT/runtime/node/bin/node" \
+  "$ROOT_DIR/script/patch_dsh_mnemon_text_only_review.sh" "$STAGING_ROOT/runtime"
 # Harness creates this shared directory with absolute links to the temporary
 # staging Runtime. It is intentionally regenerated on the user's first start,
 # where the links can point at the final bundled Runtime path; shipping the

@@ -38,7 +38,7 @@ struct ContentView: View {
                 TitlebarStatusAccessory(
                     content: AnyView(statusSummary),
                     layoutAttribute: .right,
-                    minimumWidth: 220,
+                    minimumWidth: 0,
                     hidesWindowTitle: false
                 )
             }
@@ -59,6 +59,8 @@ struct ContentView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "creditcard")
+                            .font(.system(size: 14, weight: .medium))
+                            .frame(width: 18, height: 18)
                             .foregroundStyle(.secondary)
                         if let amount = model.balanceAmountDisplayText {
                             Text("余额")
@@ -70,7 +72,7 @@ struct ContentView: View {
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
                 .help("点击更换 DeepSeek API Key")
             } else {
@@ -79,18 +81,20 @@ struct ContentView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "creditcard")
+                            .font(.system(size: 14, weight: .medium))
+                            .frame(width: 18, height: 18)
                         Text(model.balanceDisplayText)
                     }
                 }
                 .buttonStyle(.plain)
-                .font(.caption)
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.secondary)
                 .help("配置 DeepSeek API Key")
             }
 
         }
         .fixedSize(horizontal: true, vertical: false)
-        .padding(.trailing, 16)
+        .padding(.trailing, 8)
     }
 
     private var runtimeUpdateControl: some View {
@@ -340,7 +344,8 @@ private struct DiscountIndicator: View {
                         .foregroundStyle(tint)
                 } else {
                     Image(systemName: "percent")
-                        .font(.system(size: 13, weight: .medium))
+                        .font(.system(size: 14, weight: .medium))
+                        .frame(width: 18, height: 18)
                         .foregroundStyle(tint)
                 }
 
@@ -348,7 +353,7 @@ private struct DiscountIndicator: View {
             }
         }
         .buttonStyle(.plain)
-        .font(.caption)
+        .font(.system(size: 14, weight: .medium))
         .foregroundStyle(tint)
         .accessibilityLabel("折扣 \(period.multiplierText)")
         .help("查看折扣时段")

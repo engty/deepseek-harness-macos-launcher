@@ -520,6 +520,72 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func filtersImagesOnlyForFixedModelMnemonReviews() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        let mnemonPackage = paths.profileWeb.appendingPathComponent(
+            "node_modules/dsh-mnemon",
+            isDirectory: true
+        )
+        let mnemonSourceURL = mnemonPackage.appendingPathComponent("lib/index.js")
+        try fileManager.createDirectory(at: mnemonSourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"name":"dsh-mnemon","version":"0.3.5"}"#.utf8)
+            .write(to: mnemonPackage.appendingPathComponent("package.json"))
+        let mnemonSource = [
+            "\t\t\tconst resolvedAgentOptions = fixed === void 0 ? baseAgentOptions : {",
+            "\t\t\t\t...baseAgentOptions ?? {},",
+            "\t\t\t\tprovider: fixed.provider,",
+            "\t\t\t\tmodel: fixed.model",
+            "\t\t\t};"
+        ].joined(separator: "\n") + "\n"
+        try Data(mnemonSource.utf8).write(to: mnemonSourceURL)
+
+        let forkSourceURL = runtimeRoot.appendingPathComponent(
+            "node_modules/@deepseek-ai/dsh-subagent-fork-in-process/lib/index.js"
+        )
+        try fileManager.createDirectory(at: forkSourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let forkSource = [
+            "function completedTurnPrefix(parent) { return parent.session.events; }",
+            "var ForkInProcessProvider = class {",
+            "\tstart(request) {",
+            "\t\tconst seed = completedTurnPrefix(request.parent);",
+            "\t\treturn seed;",
+            "\t}",
+            "\tprepareContinuable(request) {",
+            "\t\tconst seed = completedTurnPrefix(request.parent);",
+            "\t\treturn seed;",
+            "\t}",
+            "};"
+        ].joined(separator: "\n") + "\n"
+        try Data(forkSource.utf8).write(to: forkSourceURL)
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.syncDshMnemonTextOnlyReviewCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        ))
+        let patchedMnemon = try String(contentsOf: mnemonSourceURL, encoding: .utf8)
+        #expect(patchedMnemon.contains("...operation === \"review\" ? { dshMnemonTextOnly: true } : {},"))
+        let patchedFork = try String(contentsOf: forkSourceURL, encoding: .utf8)
+        #expect(patchedFork.contains("function sanitizeMnemonForkValue(value)"))
+        #expect(patchedFork.contains("request.agentOptions?.dshMnemonTextOnly === true"))
+        #expect(patchedFork.components(separatedBy: "const seed = mnemonForkSeed(request);").count == 3)
+        #expect(!(try installer.syncDshMnemonTextOnlyReviewCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        )))
+    }
+
+    @Test
     @MainActor
     func rejectsRuntimeArchiveSymlinkEscapingStagingRoot() async throws {
         let fileManager = FileManager.default

@@ -124,6 +124,18 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.installFailed(install.output)
         }
 
+        // The official package update may replace the fork provider. Reapply
+        // the review-only text filter before archiving so fixed-model Mnemon
+        // reviews remain compatible with text-only provider adapters.
+        _ = try DefaultProfileInstaller(fileManager: fileManager)
+            .syncDshMnemonTextOnlyReviewCompatibility(
+                profileWeb: stagedRuntime.appendingPathComponent(
+                    "default-profile/profiles/web",
+                    isDirectory: true
+                ),
+                runtimeRoot: stagedRuntime
+            )
+
         progress(.verifying)
         let locator = RuntimeLocator(environment: [
             "HARNESS_RUNTIME_ROOT": stagedRuntime.path,
