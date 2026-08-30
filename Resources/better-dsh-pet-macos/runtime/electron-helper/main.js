@@ -31,7 +31,8 @@ function speakText(text) {
   if (!safeText) return
   if (speechProcess && !speechProcess.killed) speechProcess.kill('SIGTERM')
   const generation = ++speechGeneration
-  const voice = process.env.DSH_PET_VOICE_NAME || 'Tingting'
+  // Sandy 是 macOS 上更自然的中文（中国大陆）系统音色；未安装时自动回退。
+  const voice = process.env.DSH_PET_VOICE_NAME || 'Sandy'
   const launch = (args, allowFallback) => {
     const child = execFile('/usr/bin/say', args, { timeout: 15000 }, (error) => {
       if (speechProcess === child) speechProcess = null
