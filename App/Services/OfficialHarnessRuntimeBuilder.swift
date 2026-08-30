@@ -51,8 +51,10 @@ final class OfficialHarnessRuntimeBuilder {
         currentInstallation: RuntimeInstallation,
         official: OfficialHarnessVersionResult,
         paths: AppPaths,
-        shellVersion: String
+        shellVersion: String,
+        progress: @escaping @MainActor (RuntimeUpdateStage) -> Void
     ) async throws -> OfficialHarnessRuntimeArtifact {
+        progress(.preparing)
         guard fileManager.fileExists(atPath: currentInstallation.root.path) else {
             throw OfficialHarnessRuntimeBuilderError.sourceRuntimeMissing
         }
@@ -82,6 +84,7 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.installFailed(copy.output)
         }
 
+        progress(.downloading)
         var environment = ProcessInfo.processInfo.environment
         environment["PATH"] = [
             stagedRuntime.appendingPathComponent("node/bin").path,
@@ -110,6 +113,7 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.installFailed(install.output)
         }
 
+        progress(.verifying)
         let locator = RuntimeLocator(environment: [
             "HARNESS_RUNTIME_ROOT": stagedRuntime.path,
             "PATH": environment["PATH"] ?? ""
@@ -137,6 +141,7 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.runtimeProbeFailed(versionProbe.output)
         }
 
+        progress(.packaging)
         let artifactURL = paths.caches
             .appendingPathComponent("updates/official-artifacts", isDirectory: true)
             .appendingPathComponent("DeepSeek-Harness-\(official.version)-runtime.tar.gz")

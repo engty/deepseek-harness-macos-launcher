@@ -6,13 +6,19 @@ struct ContentView: View {
     @ObservedObject var model: LauncherModel
 
     var body: some View {
-        Group {
-            if let endpoint = model.endpointURL {
-                HarnessWebView(url: endpoint) { error in
-                    model.webViewDidFail(error)
+        ZStack {
+            Group {
+                if let endpoint = model.endpointURL {
+                    HarnessWebView(url: endpoint) { error in
+                        model.webViewDidFail(error)
+                    }
+                } else {
+                    StartupView(model: model)
                 }
-            } else {
-                StartupView(model: model)
+            }
+
+            if let stage = model.runtimeUpdateStage {
+                RuntimeUpdateProgressView(stage: stage)
             }
         }
         .frame(minWidth: 980, minHeight: 680)
@@ -96,6 +102,34 @@ struct ContentView: View {
         case .unknown:
             return .secondary
         }
+    }
+}
+
+private struct RuntimeUpdateProgressView: View {
+    let stage: RuntimeUpdateStage
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: 28, weight: .medium))
+                .foregroundStyle(.tint)
+
+            Text("正在升级 DeepSeek Harness")
+                .font(.headline)
+
+            ProgressView(value: stage.fraction)
+                .progressViewStyle(.linear)
+                .frame(width: 280)
+
+            Text("阶段 \(stage.rawValue)/\(RuntimeUpdateStage.totalSteps)：\(stage.message)")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(26)
+        .frame(minWidth: 360)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .shadow(radius: 18)
     }
 }
 

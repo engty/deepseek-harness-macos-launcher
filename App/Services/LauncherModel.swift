@@ -11,6 +11,7 @@ final class LauncherModel: ObservableObject {
     @Published private(set) var runtimeVersion: String?
     @Published private(set) var lastError: String?
     @Published private(set) var updateState: RuntimeUpdateState = .idle
+    @Published private(set) var runtimeUpdateStage: RuntimeUpdateStage?
     @Published private(set) var appUpdateState: AppUpdateState = .idle
     @Published private(set) var balanceState: DeepSeekBalanceState = .notConfigured
     @Published private(set) var isBalanceConfigured = false
@@ -1013,6 +1014,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func downloadLatestUpdateIfAvailable() async {
+        runtimeUpdateStage = .checking
         guard let manifest = latestManifest else {
             await checkForUpdates(presentResult: false)
             if let manifest = latestManifest {
@@ -1020,6 +1022,8 @@ final class LauncherModel: ObservableObject {
             } else if let official = latestOfficialHarnessVersion,
                       case .officialAvailable = updateState {
                 await downloadOfficialLatestUpdate(official)
+            } else {
+                runtimeUpdateStage = nil
             }
             return
         }
@@ -1036,14 +1040,19 @@ final class LauncherModel: ObservableObject {
                 currentInstallation: currentInstallation,
                 official: official,
                 paths: paths,
-                shellVersion: currentAppVersion
+                shellVersion: currentAppVersion,
+                progress: { [weak self] stage in
+                    self?.runtimeUpdateStage = stage
+                }
             )
             latestManifest = prepared.manifest
+            runtimeUpdateStage = .waitingForConfirmation
             guard presentRuntimeActivationConfirmation(
                 manifest: prepared.manifest,
                 artifactURL: prepared.artifactURL
             ) else {
                 latestManifest = nil
+                runtimeUpdateStage = nil
                 updateState = .officialAvailable(official.version)
                 return
             }
@@ -1052,6 +1061,7 @@ final class LauncherModel: ObservableObject {
                 artifactURL: prepared.artifactURL
             )
         } catch {
+            runtimeUpdateStage = nil
             updateState = .failed(error.localizedDescription)
             presentInfoAlert(title: "Harness 更新准备失败", message: error.localizedDescription)
         }
@@ -1062,14 +1072,18 @@ final class LauncherModel: ObservableObject {
         defer { endExclusiveOperation() }
         updateState = .checking
         do {
+            runtimeUpdateStage = .downloading
             let destination = paths.caches.appendingPathComponent("updates/staging", isDirectory: true)
             let artifactURL = try await updateService.download(manifest, to: destination)
+            runtimeUpdateStage = .waitingForConfirmation
             guard presentRuntimeActivationConfirmation(manifest: manifest, artifactURL: artifactURL) else {
+                runtimeUpdateStage = nil
                 updateState = .available(manifest.runtimeID)
                 return
             }
             await activateRuntimeUpdate(manifest: manifest, artifactURL: artifactURL)
         } catch {
+            runtimeUpdateStage = nil
             updateState = .failed(error.localizedDescription)
             presentInfoAlert(title: "Harness 更新下载失败", message: error.localizedDescription)
         }
@@ -1080,6 +1094,7 @@ final class LauncherModel: ObservableObject {
         let previousInstallation = try? locator.locate()
         var activation: RuntimeActivation?
         var dataActivation: DataSlotActivation?
+        runtimeUpdateStage = .activating
         phase = .busy("Updating DeepSeek Harness")
         if wasRunning { await processController.stop() }
 
@@ -1099,6 +1114,7 @@ final class LauncherModel: ObservableObject {
                 .appendingPathComponent("updates/base-preflight", isDirectory: true)
                 .appendingPathComponent(UUID().uuidString, isDirectory: true)
             defer { try? FileManager.default.removeItem(at: basePreflightRoot) }
+            runtimeUpdateStage = .verifying
             try await runtimePreflight.run(
                 installation: newActivation.installation,
                 paths: paths,
@@ -1108,6 +1124,7 @@ final class LauncherModel: ObservableObject {
 
             // Always boot the new Runtime against a clone of the user's real
             // profile, even when the App was stopped before the update.
+            runtimeUpdateStage = .testing
             let candidateController = HarnessProcessController()
             do {
                 _ = try await candidateController.start(
@@ -1141,10 +1158,12 @@ final class LauncherModel: ObservableObject {
             // longer referenced by any pointer.
             runtimeInstaller.cleanupOrphanedRuntimes(paths: paths)
             updateState = .downloaded(artifactURL.path)
+            runtimeUpdateStage = .completed
             presentInfoAlert(
                 title: "DeepSeek Harness 已更新",
                 message: "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。"
             )
+            runtimeUpdateStage = nil
         } catch {
             if let dataActivation {
                 try? dataSlotManager.rollback(dataActivation, paths: paths)
@@ -1154,6 +1173,7 @@ final class LauncherModel: ObservableObject {
             }
             lastError = error.localizedDescription
             updateState = .failed(error.localizedDescription)
+            runtimeUpdateStage = nil
             phase = .failed("DeepSeek Harness 更新失败。\n\(error.localizedDescription)")
 
             if wasRunning, let previousInstallation {

@@ -61,6 +61,47 @@ enum RuntimeUpdateState: Equatable {
     case failed(String)
 }
 
+enum RuntimeUpdateStage: Int, Equatable {
+    case checking = 1
+    case preparing = 2
+    case downloading = 3
+    case verifying = 4
+    case packaging = 5
+    case waitingForConfirmation = 6
+    case activating = 7
+    case testing = 8
+    case completed = 9
+
+    static let totalSteps = 9
+
+    var message: String {
+        switch self {
+        case .checking:
+            return "正在检查官方 Harness 版本…"
+        case .preparing:
+            return "正在准备 App 私有 Runtime…"
+        case .downloading:
+            return "正在下载并安装 Harness 依赖…"
+        case .verifying:
+            return "正在验证新 Runtime…"
+        case .packaging:
+            return "正在打包新 Runtime…"
+        case .waitingForConfirmation:
+            return "Runtime 已准备好，等待确认安装"
+        case .activating:
+            return "正在停止旧 Runtime 并安装新版本…"
+        case .testing:
+            return "正在用当前插件配置进行启动检查…"
+        case .completed:
+            return "Harness Runtime 升级完成"
+        }
+    }
+
+    var fraction: Double {
+        Double(rawValue) / Double(Self.totalSteps)
+    }
+}
+
 enum DeepSeekDiscountPeriod: Equatable {
     case peak
     case offPeak
