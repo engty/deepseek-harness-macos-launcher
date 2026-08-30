@@ -46,4 +46,20 @@ cp "$ADAPTER_ROOT/runtime/electron-helper/renderer.js" "$PACKAGE_ROOT/runtime/el
 cp "$ADAPTER_ROOT/scripts/ensure-electron.mjs" "$PACKAGE_ROOT/scripts/ensure-electron.mjs"
 cp "$ADAPTER_ROOT/cordis.patch.yml" "$PACKAGE_ROOT/cordis.patch.yml"
 
+# The upstream settings panel owns its range input in lib/client.js instead of
+# deriving it from the server schema. Keep that UI bound to the same 40%-120%
+# contract; fail closed if the pinned upstream source changes unexpectedly.
+CLIENT_FILE="$PACKAGE_ROOT/lib/client.js"
+if [[ ! -f "$CLIENT_FILE" ]]; then
+  echo "better-dsh-pet 配置面板文件缺失：$CLIENT_FILE" >&2
+  exit 2
+fi
+/usr/bin/perl -0pi -e "s/type: 'range', min: 0\\.8, max: 1\\.2/type: 'range', min: 0.4, max: 1.2/" "$CLIENT_FILE"
+/usr/bin/perl -0pi -e 's/气泡大小（0\.8～1\.2）/气泡大小（0.4～1.2）/g; s/气泡大小（80%～120%）/气泡大小（40%～120%）/g' \
+  "$PACKAGE_ROOT/lib/types/index.d.ts" "$PACKAGE_ROOT/README.md" 2>/dev/null || true
+if ! grep -Fq "type: 'range', min: 0.4, max: 1.2" "$CLIENT_FILE"; then
+  echo "better-dsh-pet 配置面板滑块未成功设置为 40% 下限。" >&2
+  exit 1
+fi
+
 echo "已应用 better-dsh-pet macOS 适配：$PACKAGE_ROOT"
