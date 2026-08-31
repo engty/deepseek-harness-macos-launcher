@@ -105,7 +105,15 @@ const hasMnemon = fs.existsSync(mnemonSourcePath);
 const hasFork = fs.existsSync(forkSourcePath);
 if (hasMnemon) {
   patchFile(mnemonSourcePath, patchMnemon);
-  patchFile(forkSourcePath, patchFork);
+  // Some official Runtime package graphs expose the fork provider only from
+  // a nested dependency path, or omit it entirely. The launcher already
+  // treats that provider as optional, so a missing top-level file must not
+  // make an otherwise valid Runtime fail packaging.
+  if (hasFork) {
+    patchFile(forkSourcePath, patchFork);
+  } else {
+    console.log("Runtime 未暴露 dsh-subagent-fork-in-process，跳过 Mnemon 图片过滤补丁。");
+  }
 } else if (hasFork) {
   // Keep the bundled fork ready for a later user-installed dsh-mnemon plugin.
   patchFile(forkSourcePath, patchFork);

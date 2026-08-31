@@ -15,7 +15,9 @@ permissions:
 env:
   NODE_VERSION: '22.19.0'
   PNPM_VERSION: '10.19.0'
-  HARNESS_VERSION: '0.1.0-rc.6'
+  # Pin the Runtime used by this release to the latest verified official npm
+  # prerelease. The App can still discover newer prereleases at runtime.
+  HARNESS_VERSION: '0.1.1-rc.2'
 
 jobs:
   source-build:
