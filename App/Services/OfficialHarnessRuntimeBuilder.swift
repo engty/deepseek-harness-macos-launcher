@@ -6,6 +6,12 @@ struct OfficialHarnessRuntimeArtifact {
     let artifactURL: URL
 }
 
+struct OfficialHarnessRuntimeStagingLayout {
+    let node: URL
+    let packageManagerBootstrap: URL
+    let packageManagerPackage: URL
+}
+
 enum OfficialHarnessRuntimeBuilderError: LocalizedError {
     case sourceRuntimeMissing
     case bundledNodeMissing
@@ -36,9 +42,10 @@ enum OfficialHarnessRuntimeBuilderError: LocalizedError {
 }
 
 /// Rebuilds a complete Runtime in the App-owned cache from the exact package
-/// version reported by the official npm registry. The existing bundled
-/// Runtime is copied first, so Node, pnpm and every dependency remain private
-/// to this App; the user's DSH_HOME and plugin profile are never modified.
+/// version reported by the official npm registry. Only the App-private Node,
+/// package manager and auxiliary tools are inherited from the old Runtime;
+/// the DSH dependency graph is always resolved into an empty tree so packages
+/// from two incompatible Harness versions can never be mixed.
 @MainActor
 final class OfficialHarnessRuntimeBuilder {
     private let fileManager: FileManager
@@ -59,12 +66,13 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.sourceRuntimeMissing
         }
 
-        let node = currentInstallation.root.appendingPathComponent("node/bin/node")
-        guard fileManager.isExecutableFile(atPath: node.path) else {
+        let sourceNode = currentInstallation.root.appendingPathComponent("node/bin/node")
+        guard fileManager.isExecutableFile(atPath: sourceNode.path) else {
             throw OfficialHarnessRuntimeBuilderError.bundledNodeMissing
         }
-        let pnpm = currentInstallation.root.appendingPathComponent("node_modules/pnpm/bin/pnpm.cjs")
-        guard fileManager.fileExists(atPath: pnpm.path) else {
+        let sourcePackageManager = currentInstallation.root
+            .appendingPathComponent("node_modules/pnpm/bin/pnpm.cjs")
+        guard fileManager.fileExists(atPath: sourcePackageManager.path) else {
             throw OfficialHarnessRuntimeBuilderError.packageManagerMissing
         }
 
@@ -75,14 +83,11 @@ final class OfficialHarnessRuntimeBuilder {
         try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: staging) }
 
-        let copy = try await SubprocessRunner.run(
-            executable: URL(fileURLWithPath: "/usr/bin/ditto"),
-            arguments: [currentInstallation.root.path, stagedRuntime.path],
-            timeout: 15 * 60
+        let layout = try stageCleanRuntimeFoundation(
+            currentInstallation: currentInstallation,
+            staging: staging,
+            stagedRuntime: stagedRuntime
         )
-        guard copy.status == 0 else {
-            throw OfficialHarnessRuntimeBuilderError.installFailed(copy.output)
-        }
 
         progress(.downloading)
         var environment = ProcessInfo.processInfo.environment
@@ -102,17 +107,13 @@ final class OfficialHarnessRuntimeBuilder {
         environment["CI"] = "1"
 
         let install = try await SubprocessRunner.run(
-            executable: node,
+            executable: layout.node,
             arguments: [
-                pnpm.path,
+                layout.packageManagerBootstrap.path,
                 "--dir", stagedRuntime.path,
                 "add",
                 "--ignore-scripts",
                 "--lockfile=false",
-                // The bundled tree was installed by npm, while this update
-                // step uses pnpm. Without --force pnpm can report success but
-                // leave the old top-level package link in place.
-                "--force",
                 "--save-exact",
                 "@deepseek-ai/dsh@\(official.version)"
             ],
@@ -123,6 +124,7 @@ final class OfficialHarnessRuntimeBuilder {
         guard install.status == 0 else {
             throw OfficialHarnessRuntimeBuilderError.installFailed(install.output)
         }
+        try embedPackageManager(layout.packageManagerPackage, in: stagedRuntime)
 
         // The official package update may replace the fork provider. Reapply
         // the review-only text filter before archiving so fixed-model Mnemon
@@ -163,6 +165,7 @@ final class OfficialHarnessRuntimeBuilder {
         guard versionProbe.status == 0 else {
             throw OfficialHarnessRuntimeBuilderError.runtimeProbeFailed(versionProbe.output)
         }
+        try await probeRuntimeLaunch(installation: installation, staging: staging)
 
         progress(.packaging)
         let artifactURL = paths.caches
@@ -203,7 +206,11 @@ final class OfficialHarnessRuntimeBuilder {
                 version: official.version,
                 commit: "npm-\(official.version)"
             ),
-            nodeVersion: try await readNodeVersion(node: node, environment: environment, currentDirectory: stagedRuntime),
+            nodeVersion: try await readNodeVersion(
+                node: layout.node,
+                environment: environment,
+                currentDirectory: stagedRuntime
+            ),
             testedPlugins: nil,
             minShellVersion: shellVersion,
             dataFormat: "dsh-home-v1",
@@ -216,6 +223,143 @@ final class OfficialHarnessRuntimeBuilder {
             publishedAt: nil
         )
         return OfficialHarnessRuntimeArtifact(manifest: manifest, artifactURL: artifactURL)
+    }
+
+    /// Creates a fresh Runtime root without copying the previous
+    /// `node_modules`. Updating in place leaves stale peer packages behind;
+    /// those packages can pass `--version` and `--dump-config` but fail when
+    /// the real plugin tree imports a symbol introduced by the new release.
+    func stageCleanRuntimeFoundation(
+        currentInstallation: RuntimeInstallation,
+        staging: URL,
+        stagedRuntime: URL
+    ) throws -> OfficialHarnessRuntimeStagingLayout {
+        let sourceRoot = currentInstallation.root
+        let sourceNodeDirectory = sourceRoot.appendingPathComponent("node", isDirectory: true)
+        let sourceNode = sourceNodeDirectory.appendingPathComponent("bin/node")
+        guard fileManager.isExecutableFile(atPath: sourceNode.path) else {
+            throw OfficialHarnessRuntimeBuilderError.bundledNodeMissing
+        }
+
+        let sourcePackageManagerPackage = sourceRoot
+            .appendingPathComponent("node_modules/pnpm", isDirectory: true)
+        let sourcePackageManager = sourcePackageManagerPackage.appendingPathComponent("bin/pnpm.cjs")
+        guard fileManager.fileExists(atPath: sourcePackageManager.path) else {
+            throw OfficialHarnessRuntimeBuilderError.packageManagerMissing
+        }
+
+        try fileManager.createDirectory(at: stagedRuntime, withIntermediateDirectories: true)
+        let stagedNodeDirectory = stagedRuntime.appendingPathComponent("node", isDirectory: true)
+        try fileManager.copyItem(at: sourceNodeDirectory, to: stagedNodeDirectory)
+
+        let bootstrapPackage = staging
+            .appendingPathComponent("pnpm-bootstrap/pnpm", isDirectory: true)
+        try fileManager.createDirectory(
+            at: bootstrapPackage.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try fileManager.copyItem(at: sourcePackageManagerPackage, to: bootstrapPackage)
+
+        try copyAuxiliaryRuntimeItems(from: sourceRoot, to: stagedRuntime)
+
+        let packageManifest: [String: Any] = [
+            "name": "deepseek-harness-private-runtime",
+            "private": true
+        ]
+        let manifestData = try JSONSerialization.data(
+            withJSONObject: packageManifest,
+            options: [.prettyPrinted, .sortedKeys]
+        )
+        try manifestData.write(
+            to: stagedRuntime.appendingPathComponent("package.json"),
+            options: .atomic
+        )
+
+        return OfficialHarnessRuntimeStagingLayout(
+            node: stagedNodeDirectory.appendingPathComponent("bin/node"),
+            packageManagerBootstrap: bootstrapPackage.appendingPathComponent("bin/pnpm.cjs"),
+            packageManagerPackage: bootstrapPackage
+        )
+    }
+
+    func embedPackageManager(_ packageManagerPackage: URL, in stagedRuntime: URL) throws {
+        let nodeModules = stagedRuntime.appendingPathComponent("node_modules", isDirectory: true)
+        let destination = nodeModules.appendingPathComponent("pnpm", isDirectory: true)
+        if fileManager.fileExists(atPath: destination.path) {
+            try fileManager.removeItem(at: destination)
+        }
+        try fileManager.createDirectory(at: nodeModules, withIntermediateDirectories: true)
+        try fileManager.copyItem(at: packageManagerPackage, to: destination)
+
+        let binDirectory = nodeModules.appendingPathComponent(".bin", isDirectory: true)
+        try fileManager.createDirectory(at: binDirectory, withIntermediateDirectories: true)
+        let link = binDirectory.appendingPathComponent("pnpm")
+        // Remove the path unconditionally so a stale broken symlink cannot
+        // survive simply because `fileExists` follows the missing target.
+        try? fileManager.removeItem(at: link)
+        try fileManager.createSymbolicLink(
+            atPath: link.path,
+            withDestinationPath: "../pnpm/bin/pnpm.cjs"
+        )
+    }
+
+    private func copyAuxiliaryRuntimeItems(from sourceRoot: URL, to stagedRuntime: URL) throws {
+        let sourceBin = sourceRoot.appendingPathComponent("bin", isDirectory: true)
+        if let helpers = try? fileManager.contentsOfDirectory(
+            at: sourceBin,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) {
+            let destinationBin = stagedRuntime.appendingPathComponent("bin", isDirectory: true)
+            try fileManager.createDirectory(at: destinationBin, withIntermediateDirectories: true)
+            for helper in helpers where helper.lastPathComponent != "dsh" {
+                try fileManager.copyItem(
+                    at: helper,
+                    to: destinationBin.appendingPathComponent(helper.lastPathComponent)
+                )
+            }
+        }
+
+        let sourceDefaultProfile = sourceRoot.appendingPathComponent("default-profile", isDirectory: true)
+        if fileManager.fileExists(atPath: sourceDefaultProfile.path) {
+            try fileManager.copyItem(
+                at: sourceDefaultProfile,
+                to: stagedRuntime.appendingPathComponent("default-profile", isDirectory: true)
+            )
+        }
+    }
+
+    private func probeRuntimeLaunch(
+        installation: RuntimeInstallation,
+        staging: URL
+    ) async throws {
+        let probeRoot = staging.appendingPathComponent("launch-probe", isDirectory: true)
+        let probePaths = AppPaths(
+            applicationSupport: probeRoot.appendingPathComponent("support", isDirectory: true),
+            caches: probeRoot.appendingPathComponent("caches", isDirectory: true),
+            logs: probeRoot.appendingPathComponent("logs", isDirectory: true)
+        )
+        let probeHome = probeRoot.appendingPathComponent("dsh-home", isDirectory: true)
+        let probeWork = probeRoot.appendingPathComponent("work", isDirectory: true)
+        try fileManager.createDirectory(at: probeHome, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: probeWork, withIntermediateDirectories: true)
+
+        let controller = HarnessProcessController(readinessTimeout: 90)
+        do {
+            _ = try await controller.start(
+                installation: installation,
+                paths: probePaths,
+                overlayURL: nil,
+                dshHomeOverride: probeHome,
+                currentDirectoryOverride: probeWork
+            )
+            await controller.stop()
+        } catch {
+            await controller.stop()
+            throw OfficialHarnessRuntimeBuilderError.runtimeProbeFailed(
+                "Runtime 真实启动预检失败：\(error.localizedDescription)"
+            )
+        }
     }
 
     private func readNodeVersion(

@@ -34,6 +34,9 @@ enum SensitiveDataRedactor {
             // so quoted strings (which may contain spaces) win; the prefix
             // deliberately stops before the value's own quote.
             (#"(?i)(\b(?:api[-_ ]?key|access[-_ ]?token|refresh[-_ ]?token|password|secret|cookie|authorization)\b\s*["']?\s*[:=]\s*)((?:"[^"]*"|'[^']*'|[^\s,;="'&]+))"#, "$1[REDACTED]"),
+            // dsh web's one-time browser bootstrap token is printed in the
+            // query string. Redact it before stdout/stderr reaches logs.
+            (#"(?i)([?&](?:token|auth[-_]?token)=)[^&#\s]+"#, "$1[REDACTED]"),
             (#"\bsk-[A-Za-z0-9_-]{8,}\b"#, "[REDACTED_API_KEY]")
         ]
         return definitions.compactMap { pattern, replacement in

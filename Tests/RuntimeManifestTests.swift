@@ -205,6 +205,27 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    @MainActor
+    func readinessParserPreservesHarnessBrowserToken() {
+        let url = HarnessProcessController.readinessURL(
+            from: "dsh web: http://127.0.0.1:43127/?token=opaque-bootstrap-token\n"
+        )
+        #expect(url?.absoluteString == "http://127.0.0.1:43127/?token=opaque-bootstrap-token")
+        #expect(HarnessProcessController.readinessURL(
+            from: "dsh web: http://192.168.1.2:43127/?token=opaque"
+        ) == nil)
+    }
+
+    @Test
+    func redactsHarnessBrowserTokenFromLogs() {
+        let result = SensitiveDataRedactor.redact(
+            "dsh web: http://127.0.0.1:43127/?token=opaque-bootstrap-token"
+        )
+        #expect(!result.contains("opaque-bootstrap-token"))
+        #expect(result.contains("token=[REDACTED]"))
+    }
+
+    @Test
     func discountScheduleUsesBeijingBusinessHours() {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = TimeZone(identifier: "Asia/Shanghai")!
@@ -583,6 +604,56 @@ struct RuntimeManifestTests {
             profileWeb: paths.profileWeb,
             runtimeRoot: runtimeRoot
         )))
+    }
+
+    @Test
+    @MainActor
+    func officialRuntimeStagingDoesNotCopyPreviousCoreDependencies() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let source = root.appendingPathComponent("source", isDirectory: true)
+        let sourceNode = source.appendingPathComponent("node/bin/node")
+        let sourcePnpm = source.appendingPathComponent("node_modules/pnpm/bin/pnpm.cjs")
+        let staleCore = source.appendingPathComponent("node_modules/@deepseek-ai/dsh-old/package.json")
+        let helper = source.appendingPathComponent("bin/mnemon")
+        let staleCLI = source.appendingPathComponent("bin/dsh")
+        let defaultProfile = source.appendingPathComponent("default-profile/profiles/web/package.json")
+        for file in [sourceNode, sourcePnpm, staleCore, helper, staleCLI, defaultProfile] {
+            try fileManager.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try Data(file.lastPathComponent.utf8).write(to: file)
+        }
+        try fileManager.setAttributes([.posixPermissions: 0o755], ofItemAtPath: sourceNode.path)
+
+        let staging = root.appendingPathComponent("staging", isDirectory: true)
+        let stagedRuntime = staging.appendingPathComponent("runtime", isDirectory: true)
+        try fileManager.createDirectory(at: staging, withIntermediateDirectories: true)
+        let installation = RuntimeInstallation(
+            executable: staleCLI,
+            root: source,
+            version: "0.1.1-rc.2",
+            nodeExecutable: sourceNode
+        )
+        let builder = OfficialHarnessRuntimeBuilder(fileManager: fileManager)
+        let layout = try builder.stageCleanRuntimeFoundation(
+            currentInstallation: installation,
+            staging: staging,
+            stagedRuntime: stagedRuntime
+        )
+
+        #expect(fileManager.fileExists(atPath: layout.node.path))
+        #expect(fileManager.fileExists(atPath: layout.packageManagerBootstrap.path))
+        #expect(fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("bin/mnemon").path))
+        #expect(!fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("bin/dsh").path))
+        #expect(fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("default-profile/profiles/web/package.json").path))
+        #expect(!fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("node_modules/@deepseek-ai/dsh-old/package.json").path))
+        #expect(!fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("node_modules/pnpm").path))
+
+        try builder.embedPackageManager(layout.packageManagerPackage, in: stagedRuntime)
+        let pnpmLink = stagedRuntime.appendingPathComponent("node_modules/.bin/pnpm")
+        #expect(try fileManager.destinationOfSymbolicLink(atPath: pnpmLink.path) == "../pnpm/bin/pnpm.cjs")
+        #expect(fileManager.fileExists(atPath: stagedRuntime.appendingPathComponent("node_modules/pnpm/bin/pnpm.cjs").path))
     }
 
     @Test

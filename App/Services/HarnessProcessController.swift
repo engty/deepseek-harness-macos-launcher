@@ -39,6 +39,7 @@ final class HarnessProcessController {
     /// preparation timeout so the launcher does not kill a healthy process.
     static let defaultReadinessTimeout: TimeInterval = 12 * 60
 
+    private let readinessTimeout: TimeInterval
     private(set) var process: Process?
     var onUnexpectedTermination: (@MainActor (String) -> Void)?
     private var outputPipe: Pipe?
@@ -50,6 +51,14 @@ final class HarnessProcessController {
     /// Thread-safe sink that coalesces pipe chunks and hands them to the main
     /// actor in bounded batches (see PendingOutputSink).
     private let pendingOutputSink = PendingOutputSink()
+
+    init() {
+        readinessTimeout = Self.defaultReadinessTimeout
+    }
+
+    init(readinessTimeout: TimeInterval) {
+        self.readinessTimeout = max(1, readinessTimeout)
+    }
 
     var isRunning: Bool { process?.isRunning == true }
 
@@ -148,9 +157,10 @@ final class HarnessProcessController {
             throw HarnessProcessError.failedToLaunch(error.localizedDescription)
         }
 
+        let timeoutNanoseconds = UInt64(readinessTimeout * 1_000_000_000)
         let timeoutTask = Task { @MainActor [weak self] in
             try? await Task.sleep(
-                nanoseconds: UInt64(Self.defaultReadinessTimeout * 1_000_000_000)
+                nanoseconds: timeoutNanoseconds
             )
             guard !Task.isCancelled, let self, self.launchToken == token else { return }
             self.failReadiness(HarnessProcessError.readinessTimeout)
@@ -242,14 +252,29 @@ final class HarnessProcessController {
 
     private func resolveReadiness(from text: String) {
         guard readinessContinuation != nil else { return }
-        let pattern = #"dsh web:\s+(http://127\.0\.0\.1:\d+)"#
-        guard let regex = try? NSRegularExpression(pattern: pattern),
-              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
-              let range = Range(match.range(at: 1), in: text),
-              let url = URL(string: String(text[range])) else { return }
+        guard let url = Self.readinessURL(from: text) else { return }
         let continuation = readinessContinuation
         readinessContinuation = nil
         continuation?.resume(returning: url)
+    }
+
+    /// Harness 0.1.2 and later append a one-time browser launch token to the
+    /// printed URI. Keep the complete local URI so the WebView can exchange
+    /// that token for its HttpOnly session cookie; never reduce it to only the
+    /// port. The host is deliberately restricted to loopback because this
+    /// URL is an internal App transport, not a remote navigation target.
+    static func readinessURL(from text: String) -> URL? {
+        let pattern = #"dsh web:\s+(https?://(?:127\.0\.0\.1|localhost):\d+(?:[/?#][^\s\"'<>]*)?)"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: text, range: NSRange(text.startIndex..<text.endIndex, in: text)),
+              let range = Range(match.range(at: 1), in: text),
+              let url = URL(string: String(text[range])),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              ["127.0.0.1", "localhost"].contains(url.host?.lowercased() ?? "") else {
+            return nil
+        }
+        return url
     }
 
     private func failReadiness(_ error: Error) {

@@ -189,7 +189,9 @@ final class LauncherModel: ObservableObject {
             plugins = profileManager.refresh()
             phase = .ready(url)
             consecutiveCrashCount = 0
-            AppLogger.launcher.info("Harness ready at \(url.absoluteString, privacy: .public)")
+            // The URL contains a one-time browser launch token on newer
+            // Runtimes. Never write that token to the unified log.
+            AppLogger.launcher.info("Harness Web UI ready on local endpoint.")
             scheduleAutomaticUpdateCheck()
             scheduleBalanceRefresh()
         } catch {
