@@ -123,6 +123,154 @@ struct DataSlotRecoveryTests {
     }
 
     @Test
+    func candidateCloneRebasesTemporaryProfileModuleLinks() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = makePaths(root: root)
+        try paths.prepare()
+        let profileWeb = paths.profileWeb
+        let profileModules = profileWeb.appendingPathComponent("node_modules", isDirectory: true)
+        let fallbackModules = profileWeb.appendingPathComponent(
+            ".dsh-module-fallback/node_modules",
+            isDirectory: true
+        )
+        let sharedPackage = paths.dshHome
+            .appendingPathComponent("profiles/node_modules/core-package", isDirectory: true)
+        try fileManager.createDirectory(at: profileModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: fallbackModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: sharedPackage, withIntermediateDirectories: true)
+        try Data("module".utf8).write(to: sharedPackage.appendingPathComponent("package.json"))
+
+        // This is the shape left by the previous updater: the profile link
+        // points at a cache candidate that has already been removed.
+        let staleTarget = paths.caches
+            .appendingPathComponent(
+                "updates/data-slots/old/candidate/dsh-home/profiles/web/.dsh-module-fallback/node_modules/core-package"
+            )
+        try fileManager.createSymbolicLink(
+            atPath: profileModules.appendingPathComponent("core-package").path,
+            withDestinationPath: staleTarget.path
+        )
+        try fileManager.createSymbolicLink(
+            atPath: profileModules.appendingPathComponent("orphan-package").path,
+            withDestinationPath: paths.caches
+                .appendingPathComponent("updates/data-slots/old/candidate/dsh-home/profiles/web/.dsh-module-fallback/node_modules/orphan-package")
+                .path
+        )
+        try fileManager.createSymbolicLink(
+            atPath: fallbackModules.appendingPathComponent("core-package").path,
+            withDestinationPath: sharedPackage.path
+        )
+
+        let manager = DataSlotManager()
+        let candidate = try await manager.cloneActiveSlot(paths: paths)
+        let candidateLink = candidate.appendingPathComponent(
+            "dsh-home/profiles/web/node_modules/core-package"
+        )
+        let candidateDestination = try fileManager.destinationOfSymbolicLink(atPath: candidateLink.path)
+        #expect(!candidateDestination.hasPrefix("/"))
+        #expect(fileManager.fileExists(atPath: candidateLink.deletingLastPathComponent()
+            .appendingPathComponent(candidateDestination).path))
+        #expect((try? fileManager.destinationOfSymbolicLink(
+            atPath: candidateLink.deletingLastPathComponent()
+                .appendingPathComponent("orphan-package").path
+        )) == nil)
+        try manager.validateCandidateModuleLinks(candidateSlot: candidate)
+    }
+
+    @Test
+    func candidateLinksAreRebasedAfterRuntimeBootMutatesProfile() async throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = makePaths(root: root)
+        try paths.prepare()
+        let profileModules = paths.profileWeb.appendingPathComponent("node_modules", isDirectory: true)
+        let fallbackModules = paths.profileWeb.appendingPathComponent(
+            ".dsh-module-fallback/node_modules",
+            isDirectory: true
+        )
+        let sharedPackage = paths.dshHome
+            .appendingPathComponent("profiles/node_modules/core-package", isDirectory: true)
+        try fileManager.createDirectory(at: profileModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: fallbackModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: sharedPackage, withIntermediateDirectories: true)
+        try Data("module".utf8).write(to: sharedPackage.appendingPathComponent("package.json"))
+        try fileManager.createSymbolicLink(
+            atPath: profileModules.appendingPathComponent("core-package").path,
+            withDestinationPath: sharedPackage.path
+        )
+        try fileManager.createSymbolicLink(
+            atPath: fallbackModules.appendingPathComponent("core-package").path,
+            withDestinationPath: sharedPackage.path
+        )
+
+        let manager = DataSlotManager()
+        let candidate = try await manager.cloneActiveSlot(paths: paths)
+        let candidateLink = candidate.appendingPathComponent(
+            "dsh-home/profiles/web/node_modules/core-package"
+        )
+        try fileManager.removeItem(at: candidateLink)
+        let generatedAbsoluteTarget = candidate.appendingPathComponent(
+            "dsh-home/profiles/web/.dsh-module-fallback/node_modules/core-package"
+        )
+        try fileManager.createSymbolicLink(
+            atPath: candidateLink.path,
+            withDestinationPath: generatedAbsoluteTarget.path
+        )
+
+        try manager.rebaseCandidateModuleLinks(candidateSlot: candidate, paths: paths)
+        let destination = try fileManager.destinationOfSymbolicLink(atPath: candidateLink.path)
+        #expect(!destination.hasPrefix("/"))
+        try manager.validateCandidateModuleLinks(candidateSlot: candidate)
+    }
+
+    @Test
+    func repairsExistingActiveProfileLinksOnLaunch() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = makePaths(root: root)
+        try paths.prepare()
+        let profileModules = paths.profileWeb.appendingPathComponent("node_modules", isDirectory: true)
+        let fallbackModules = paths.profileWeb.appendingPathComponent(
+            ".dsh-module-fallback/node_modules",
+            isDirectory: true
+        )
+        let sharedPackage = paths.dshHome
+            .appendingPathComponent("profiles/node_modules/core-package", isDirectory: true)
+        try fileManager.createDirectory(at: profileModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: fallbackModules, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: sharedPackage, withIntermediateDirectories: true)
+        try Data("module".utf8).write(to: sharedPackage.appendingPathComponent("package.json"))
+
+        let staleTarget = paths.caches
+            .appendingPathComponent(
+                "updates/data-slots/old/candidate/dsh-home/profiles/web/.dsh-module-fallback/node_modules/core-package"
+            )
+        try fileManager.createSymbolicLink(
+            atPath: profileModules.appendingPathComponent("core-package").path,
+            withDestinationPath: staleTarget.path
+        )
+        try fileManager.createSymbolicLink(
+            atPath: fallbackModules.appendingPathComponent("core-package").path,
+            withDestinationPath: sharedPackage.path
+        )
+
+        let manager = DataSlotManager()
+        try manager.repairActiveModuleLinks(paths: paths)
+        let destination = try fileManager.destinationOfSymbolicLink(
+            atPath: profileModules.appendingPathComponent("core-package").path
+        )
+        #expect(!destination.hasPrefix("/"))
+        try manager.validateCandidateModuleLinks(candidateSlot: paths.activeDataSlot)
+    }
+
+    @Test
     func completesInterruptedSwapForwardWhenCandidateExists() async throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

@@ -85,6 +85,10 @@ final class LauncherModel: ObservableObject {
             try paths.prepare()
             dataSlotManager.recoverPendingTransaction(paths: paths)
             updateService.cleanupTemporaryFiles(paths: paths)
+            // Repair profile links left by older Runtime updates before the
+            // first plugin/model discovery. A stale cache candidate must never
+            // make an otherwise valid installation look unconfigured.
+            try dataSlotManager.repairActiveModuleLinks(paths: paths)
             plugins = profileManager.refresh()
             // Restore the binding state from Keychain. The item is created
             // without an access-control prompt, so a non-interactive read is
@@ -146,6 +150,7 @@ final class LauncherModel: ObservableObject {
             try paths.prepare()
             dataSlotManager.recoverPendingTransaction(paths: paths)
             updateService.cleanupTemporaryFiles(paths: paths)
+            try dataSlotManager.repairActiveModuleLinks(paths: paths)
             let installation = try locator.locate()
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
@@ -1184,6 +1189,15 @@ final class LauncherModel: ObservableObject {
                     "Runtime 用户 profile 预检失败：\(error.localizedDescription)"
                 )
             }
+
+            // Candidate boot may create fresh module-fallback links using the
+            // temporary cache path. Rebase them after boot and before the
+            // candidate is moved into the durable active slot.
+            try dataSlotManager.rebaseCandidateModuleLinks(
+                candidateSlot: candidateSlot,
+                paths: paths
+            )
+            try dataSlotManager.validateCandidateModuleLinks(candidateSlot: candidateSlot)
 
             dataActivation = try dataSlotManager.activate(candidateSlot: candidateSlot, paths: paths)
             if wasRunning {

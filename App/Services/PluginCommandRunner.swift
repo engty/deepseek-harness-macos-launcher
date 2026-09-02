@@ -169,6 +169,15 @@ final class PluginCommandRunner {
             throw PluginCommandError.nonZeroExit("插件候选启动预检失败，当前 profile 未改变。")
         }
 
+        // `dsh` may refresh the module-fallback projection during candidate
+        // boot. Rebase those links before the temporary slot is activated, so
+        // the next cleanup cannot invalidate the newly installed profile.
+        try dataSlotManager.rebaseCandidateModuleLinks(
+            candidateSlot: stagingSlot,
+            paths: paths
+        )
+        try dataSlotManager.validateCandidateModuleLinks(candidateSlot: stagingSlot)
+
         guard FileManager.default.fileExists(atPath: stagingProfile.appendingPathComponent("package.json").path) else {
             PluginOperationLog.append(
                 "STAGING PROFILE INVALID: package.json missing",

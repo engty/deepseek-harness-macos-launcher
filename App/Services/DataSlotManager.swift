@@ -10,6 +10,7 @@ enum DataSlotError: LocalizedError {
     case activationFailed(String)
     case rollbackFailed(String)
     case recoveryFailed(String)
+    case profileIntegrityFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -21,6 +22,8 @@ enum DataSlotError: LocalizedError {
             return "数据 slot 恢复失败：\(message)"
         case .recoveryFailed(let message):
             return "数据 slot 事务恢复失败：\(message)"
+        case .profileIntegrityFailed(let message):
+            return "Harness profile 完整性检查失败：\(message)"
         }
     }
 }
@@ -63,11 +66,80 @@ struct DataSlotManager {
                 try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
                 let candidate = root.appendingPathComponent("candidate", isDirectory: true)
                 try fileManager.copyItem(at: paths.activeDataSlot, to: candidate)
+                try Self.rebaseModuleLinks(
+                    in: candidate,
+                    sourceSlot: paths.activeDataSlot,
+                    paths: paths,
+                    fileManager: fileManager,
+                    removeMissing: true
+                )
                 return candidate
             } catch {
                 throw DataSlotError.cloneFailed(error.localizedDescription)
             }
         }.value
+    }
+
+    /// Rebase links created by the Harness module-fallback layer after a
+    /// candidate has been booted. The candidate is moved from the cache into
+    /// `data/active`, so absolute links into either location would become
+    /// stale as soon as activation completes. External links (for example,
+    /// links into the bundled Runtime) are intentionally left untouched.
+    func rebaseCandidateModuleLinks(candidateSlot: URL, paths: AppPaths) throws {
+        try Self.rebaseModuleLinks(
+            in: candidateSlot,
+            sourceSlot: paths.activeDataSlot,
+            paths: paths,
+            fileManager: fileManager,
+            removeMissing: false
+        )
+    }
+
+    /// Repairs an already-active profile left by an older launcher version.
+    /// This is safe to run at launch: only links inside the App-owned Harness
+    /// web profile are changed, and only when their target is inside an
+    /// App-owned slot or update candidate.
+    func repairActiveModuleLinks(paths: AppPaths) throws {
+        try Self.rebaseModuleLinks(
+            in: paths.activeDataSlot,
+            sourceSlot: paths.activeDataSlot,
+            paths: paths,
+            fileManager: fileManager,
+            removeMissing: true
+        )
+    }
+
+    /// Reject a candidate whose profile still contains an unresolved module
+    /// link. Runtime `--version` and `--dump-config` checks do not load every
+    /// browser/plugin module, so this guard catches the failure before the
+    /// candidate can replace the working slot.
+    func validateCandidateModuleLinks(candidateSlot: URL) throws {
+        let links = try Self.moduleLinkURLs(
+            profileWeb: candidateSlot.appendingPathComponent(
+                "dsh-home/profiles/web",
+                isDirectory: true
+            ),
+            fileManager: fileManager
+        )
+        var broken: [String] = []
+        for link in links {
+            guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: link.path) else {
+                continue
+            }
+            let target = Self.absoluteTargetPath(
+                destination: destination,
+                parent: link.deletingLastPathComponent()
+            )
+            guard !fileManager.fileExists(atPath: target) else { continue }
+            broken.append(link.lastPathComponent)
+        }
+        guard broken.isEmpty else {
+            let preview = broken.prefix(5).joined(separator: ", ")
+            let suffix = broken.count > 5 ? " 等 \(broken.count) 项" : ""
+            throw DataSlotError.profileIntegrityFailed(
+                "发现无法解析的模块链接：\(preview)\(suffix)"
+            )
+        }
     }
 
     func activate(candidateSlot: URL, paths: AppPaths) throws -> DataSlotActivation {
@@ -228,5 +300,160 @@ struct DataSlotManager {
 
     private static func timestamp() -> String {
         ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+    }
+
+    // MARK: - Profile module-link hygiene
+
+    private static func rebaseModuleLinks(
+        in slot: URL,
+        sourceSlot: URL,
+        paths: AppPaths,
+        fileManager: FileManager,
+        removeMissing: Bool
+    ) throws {
+        let profileWeb = slot.appendingPathComponent(
+            "dsh-home/profiles/web",
+            isDirectory: true
+        )
+        let links = try moduleLinkURLs(profileWeb: profileWeb, fileManager: fileManager)
+        let candidatePath = slot.standardizedFileURL.path
+        let sourcePath = sourceSlot.standardizedFileURL.path
+        let cacheDataSlotsPath = paths.caches
+            .appendingPathComponent("updates/data-slots", isDirectory: true)
+            .standardizedFileURL.path
+
+        for link in links {
+            guard let destination = try? fileManager.destinationOfSymbolicLink(atPath: link.path) else {
+                continue
+            }
+            let targetPath = absoluteTargetPath(
+                destination: destination,
+                parent: link.deletingLastPathComponent()
+            )
+            guard let mappedTarget = mapOwnedTarget(
+                targetPath,
+                candidatePath: candidatePath,
+                sourcePath: sourcePath,
+                cacheDataSlotsPath: cacheDataSlotsPath
+            ) else {
+                continue
+            }
+
+            // An older active profile can retain an orphaned link for a package
+            // that is no longer present in the Runtime closure. Remove that
+            // stale projection during active-slot repair/clone instead of
+            // carrying a guaranteed failure into the next slot. Candidate
+            // post-boot rebasing keeps missing links so validation can reject
+            // the update rather than hiding a newly introduced dependency.
+            if removeMissing && !fileManager.fileExists(atPath: mappedTarget) {
+                try fileManager.removeItem(at: link)
+                continue
+            }
+
+            let relativeTarget = relativePath(
+                from: link.deletingLastPathComponent().standardizedFileURL.path,
+                to: mappedTarget
+            )
+            guard destination != relativeTarget else { continue }
+
+            // `removeItem` removes the link itself even when its destination
+            // is dangling; `fileExists` must not be used as the guard here.
+            try fileManager.removeItem(at: link)
+            try fileManager.createSymbolicLink(
+                atPath: link.path,
+                withDestinationPath: relativeTarget
+            )
+        }
+    }
+
+    /// Returns only the shallow module-link directories used by pnpm's hoisted
+    /// profile and by Harness's private module-fallback projection. Avoiding a
+    /// full package-tree walk keeps launch-time repair cheap for large plugins.
+    private static func moduleLinkURLs(
+        profileWeb: URL,
+        fileManager: FileManager
+    ) throws -> [URL] {
+        let roots = [
+            profileWeb.appendingPathComponent("node_modules", isDirectory: true),
+            profileWeb.appendingPathComponent(
+                ".dsh-module-fallback/node_modules",
+                isDirectory: true
+            )
+        ]
+        var links: [URL] = []
+        for root in roots {
+            guard fileManager.fileExists(atPath: root.path) else { continue }
+            let entries = try fileManager.contentsOfDirectory(
+                at: root,
+                includingPropertiesForKeys: nil,
+                options: []
+            )
+            for entry in entries {
+                if (try? fileManager.destinationOfSymbolicLink(atPath: entry.path)) != nil {
+                    links.append(entry)
+                    continue
+                }
+                guard entry.lastPathComponent.hasPrefix("@") || entry.lastPathComponent == ".bin",
+                      (try? entry.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true else {
+                    continue
+                }
+                let scopedEntries = try fileManager.contentsOfDirectory(
+                    at: entry,
+                    includingPropertiesForKeys: nil,
+                    options: []
+                )
+                links.append(contentsOf: scopedEntries.filter {
+                    (try? fileManager.destinationOfSymbolicLink(atPath: $0.path)) != nil
+                })
+            }
+        }
+        return links
+    }
+
+    private static func absoluteTargetPath(destination: String, parent: URL) -> String {
+        if destination.hasPrefix("/") {
+            return URL(fileURLWithPath: destination).standardizedFileURL.path
+        }
+        return parent
+            .appendingPathComponent(destination)
+            .standardizedFileURL
+            .path
+    }
+
+    private static func mapOwnedTarget(
+        _ targetPath: String,
+        candidatePath: String,
+        sourcePath: String,
+        cacheDataSlotsPath: String
+    ) -> String? {
+        if targetPath == candidatePath || targetPath.hasPrefix(candidatePath + "/") {
+            return targetPath
+        }
+        if targetPath == sourcePath || targetPath.hasPrefix(sourcePath + "/") {
+            return candidatePath + String(targetPath.dropFirst(sourcePath.count))
+        }
+
+        let cachePrefix = cacheDataSlotsPath + "/"
+        guard targetPath.hasPrefix(cachePrefix) else { return nil }
+        let remainder = String(targetPath.dropFirst(cachePrefix.count))
+        guard let marker = remainder.range(of: "/candidate") else { return nil }
+        let suffix = remainder[marker.upperBound...]
+        guard suffix.isEmpty || suffix.first == "/" else { return nil }
+        return candidatePath + String(suffix)
+    }
+
+    private static func relativePath(from base: String, to target: String) -> String {
+        let baseComponents = URL(fileURLWithPath: base).standardizedFileURL.pathComponents
+        let targetComponents = URL(fileURLWithPath: target).standardizedFileURL.pathComponents
+        var common = 0
+        while common < baseComponents.count,
+              common < targetComponents.count,
+              baseComponents[common] == targetComponents[common] {
+            common += 1
+        }
+        let up = Array(repeating: "..", count: baseComponents.count - common)
+        let down = Array(targetComponents.dropFirst(common))
+        let components = up + down
+        return components.isEmpty ? "." : components.joined(separator: "/")
     }
 }
