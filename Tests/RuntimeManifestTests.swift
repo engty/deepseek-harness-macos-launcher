@@ -485,6 +485,68 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func alignsStaleProfileLlmWithRuntimeAndAdaptsCodexIdentifier() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let runtimeRoot = root.appendingPathComponent("runtime", isDirectory: true)
+        let runtimeLlm = runtimeRoot.appendingPathComponent(
+            "node_modules/.pnpm/node_modules/@deepseek-ai/dsh-llm",
+            isDirectory: true
+        )
+        let runtimeIndex = runtimeLlm.appendingPathComponent("lib/index.js")
+        try fileManager.createDirectory(at: runtimeIndex.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("export { ToolCallId };".utf8).write(to: runtimeIndex)
+        try Data(#"{"name":"@deepseek-ai/dsh-llm","version":"0.1.2-alpha.5"}"#.utf8)
+            .write(to: runtimeLlm.appendingPathComponent("package.json"))
+
+        let staleLlm = paths.profileWeb.appendingPathComponent(
+            "node_modules/@deepseek-ai/dsh-llm",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: staleLlm, withIntermediateDirectories: true)
+        try Data(#"{"name":"@deepseek-ai/dsh-llm","version":"0.1.0-rc.6"}"#.utf8)
+            .write(to: staleLlm.appendingPathComponent("package.json"))
+
+        let codexSource = paths.profileWeb.appendingPathComponent(
+            "node_modules/dsh-llm-codex/lib/translate.js"
+        )
+        try fileManager.createDirectory(at: codexSource.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data("import { CallId, LlmError, EMPTY_RESPONSE_CODE } from '@deepseek-ai/dsh-llm';\nconst id = CallId(value);\n".utf8)
+            .write(to: codexSource)
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        let quarantine = root.appendingPathComponent("quarantine", isDirectory: true)
+        #expect(try installer.syncRuntimeCoreModuleCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot,
+            quarantineRoot: quarantine
+        ))
+        let target = try fileManager.destinationOfSymbolicLink(atPath: staleLlm.path)
+        #expect(target == runtimeLlm.path)
+        #expect(fileManager.fileExists(atPath: quarantine.path))
+
+        #expect(try installer.syncDshLlmCodexCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        ))
+        let patched = try String(contentsOf: codexSource, encoding: .utf8)
+        #expect(patched.contains("ToolCallId, LlmError"))
+        #expect(patched.contains("ToolCallId(value)"))
+        #expect(!(try installer.syncDshLlmCodexCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        )))
+    }
+
+    @Test
     func adaptsDshMnemonProjectionForLegacyRuntimeAndRestoresModernShape() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

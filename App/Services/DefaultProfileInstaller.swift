@@ -6,6 +6,20 @@ import Foundation
 struct DefaultProfileInstaller {
     private let fileManager: FileManager
 
+    private enum RuntimeCompatibilityError: LocalizedError {
+        case runtimePackageMissing(String)
+        case quarantineFailed(String)
+
+        var errorDescription: String? {
+            switch self {
+            case .runtimePackageMissing(let package):
+                return "当前 Runtime 缺少官方模块 \(package)，无法完成兼容性修复。"
+            case .quarantineFailed(let message):
+                return "无法隔离旧版 Runtime 模块：\(message)"
+            }
+        }
+    }
+
     private static let betterDshPetAdapterFiles = [
         "lib/index.js",
         "lib/client.js",
@@ -19,6 +33,150 @@ struct DefaultProfileInstaller {
 
     init(fileManager: FileManager = .default) {
         self.fileManager = fileManager
+    }
+
+    /// Keeps the profile's official LLM module aligned with the active
+    /// Runtime. A profile created by an older Harness can contain a real
+    /// `@deepseek-ai/dsh-llm` directory. Node resolves that directory before
+    /// the Runtime's module tree, and the old module does not register the
+    /// modern `/api/llm/*` routes, producing an opaque HTTP 404 in Settings.
+    ///
+    /// The previous directory is moved into an App-owned backup instead of
+    /// being deleted. The replacement is an absolute link to the exact
+    /// Runtime package selected for this launch, so future Runtime updates
+    /// can safely re-point it without touching user plugin settings.
+    @discardableResult
+    func syncRuntimeCoreModuleCompatibility(
+        paths: AppPaths,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        try syncRuntimeCoreModuleCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot,
+            quarantineRoot: paths.backups
+                .appendingPathComponent("runtime-compatibility", isDirectory: true)
+        )
+    }
+
+    /// Staged-slot variant used during Runtime update preflight. Keeping the
+    /// quarantine inside the candidate slot makes the clone self-contained;
+    /// it is moved together with the profile only after the candidate boots.
+    @discardableResult
+    func syncRuntimeCoreModuleCompatibility(
+        profileWeb: URL,
+        runtimeRoot: URL,
+        quarantineRoot: URL
+    ) throws -> Bool {
+        let runtimePackage = try runtimePackageDirectory(
+            named: "dsh-llm",
+            runtimeRoot: runtimeRoot
+        )
+        let activePackage = profileWeb
+            .appendingPathComponent("node_modules/@deepseek-ai/dsh-llm", isDirectory: true)
+        let activeExists = fileManager.fileExists(atPath: activePackage.path)
+            || (try? fileManager.destinationOfSymbolicLink(atPath: activePackage.path)) != nil
+        let activeResolved = activePackage.resolvingSymlinksInPath().standardizedFileURL.path
+        let runtimeResolved = runtimePackage.standardizedFileURL.path
+        guard !activeExists || activeResolved != runtimeResolved else { return false }
+
+        if activeExists {
+            let version = packageNameAndVersion(
+                at: activePackage.appendingPathComponent("package.json")
+            )?.1 ?? "unknown"
+            let backup = quarantineRoot
+                .appendingPathComponent(
+                    "dsh-llm-\(safePathComponent(version))-\(UUID().uuidString)",
+                    isDirectory: true
+                )
+            do {
+                try fileManager.createDirectory(
+                    at: backup.deletingLastPathComponent(),
+                    withIntermediateDirectories: true
+                )
+                try fileManager.moveItem(at: activePackage, to: backup)
+            } catch {
+                throw RuntimeCompatibilityError.quarantineFailed(error.localizedDescription)
+            }
+        }
+
+        do {
+            try fileManager.createDirectory(
+                at: activePackage.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try fileManager.createSymbolicLink(
+                atPath: activePackage.path,
+                withDestinationPath: runtimePackage.path
+            )
+        } catch {
+            throw RuntimeCompatibilityError.quarantineFailed(error.localizedDescription)
+        }
+        AppLogger.plugins.info(
+            "Aligned profile @deepseek-ai/dsh-llm with the active Runtime."
+        )
+        return true
+    }
+
+    /// dsh-llm-codex 0.1.1 was released against the old `CallId` export.
+    /// Modern Harness Runtimes expose the equivalent `ToolCallId` symbol.
+    /// Adapt only this narrow import/call site based on the actual Runtime
+    /// export, and reverse it automatically when an older Runtime is selected.
+    @discardableResult
+    func syncDshLlmCodexCompatibility(
+        paths: AppPaths,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        try syncDshLlmCodexCompatibility(
+            profileWeb: paths.profileWeb,
+            runtimeRoot: runtimeRoot
+        )
+    }
+
+    @discardableResult
+    func syncDshLlmCodexCompatibility(
+        profileWeb: URL,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        let sourceURL = profileWeb
+            .appendingPathComponent("node_modules/dsh-llm-codex/lib/translate.js")
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else {
+            return false
+        }
+        let runtimePackage = try runtimePackageDirectory(
+            named: "dsh-llm",
+            runtimeRoot: runtimeRoot
+        )
+        let runtimeExports = try String(
+            contentsOf: runtimePackage.appendingPathComponent("lib/index.js"),
+            encoding: .utf8
+        )
+        let modernRuntime = runtimeExports.contains("ToolCallId")
+        let legacyRuntime = !modernRuntime && runtimeExports.contains("CallId")
+        let adapted: String
+        if modernRuntime,
+           source.contains("import { CallId, LlmError, EMPTY_RESPONSE_CODE }") {
+            adapted = source
+                .replacingOccurrences(
+                    of: "import { CallId, LlmError, EMPTY_RESPONSE_CODE }",
+                    with: "import { ToolCallId, LlmError, EMPTY_RESPONSE_CODE }"
+                )
+                .replacingOccurrences(of: "CallId(", with: "ToolCallId(")
+        } else if legacyRuntime,
+                  source.contains("import { ToolCallId, LlmError, EMPTY_RESPONSE_CODE }") {
+            adapted = source
+                .replacingOccurrences(
+                    of: "import { ToolCallId, LlmError, EMPTY_RESPONSE_CODE }",
+                    with: "import { CallId, LlmError, EMPTY_RESPONSE_CODE }"
+                )
+                .replacingOccurrences(of: "ToolCallId(", with: "CallId(")
+        } else {
+            return false
+        }
+        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
+        AppLogger.plugins.info(
+            "Aligned dsh-llm-codex with the active Runtime LLM identifier API."
+        )
+        return true
     }
 
     @discardableResult
@@ -329,6 +487,41 @@ struct DefaultProfileInstaller {
             return nil
         }
         return (name, version)
+    }
+
+    private func runtimePackageDirectory(named package: String, runtimeRoot: URL) throws -> URL {
+        let direct = runtimeRoot
+            .appendingPathComponent("node_modules/.pnpm/node_modules/@deepseek-ai/\(package)", isDirectory: true)
+        if fileManager.fileExists(atPath: direct.appendingPathComponent("package.json").path) {
+            return direct.resolvingSymlinksInPath()
+        }
+
+        let pnpmRoot = runtimeRoot.appendingPathComponent("node_modules/.pnpm", isDirectory: true)
+        guard let entries = try? fileManager.contentsOfDirectory(
+            at: pnpmRoot,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        ) else {
+            throw RuntimeCompatibilityError.runtimePackageMissing("@deepseek-ai/\(package)")
+        }
+        let prefix = "@deepseek-ai+\(package)@"
+        for entry in entries where entry.lastPathComponent.hasPrefix(prefix) {
+            let candidate = entry.appendingPathComponent(
+                "node_modules/@deepseek-ai/\(package)",
+                isDirectory: true
+            )
+            if fileManager.fileExists(atPath: candidate.appendingPathComponent("package.json").path) {
+                return candidate.resolvingSymlinksInPath()
+            }
+        }
+        throw RuntimeCompatibilityError.runtimePackageMissing("@deepseek-ai/\(package)")
+    }
+
+    private func safePathComponent(_ value: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: ".-_"))
+        let scalars = value.unicodeScalars.map { allowed.contains($0) ? Character(String($0)) : "_" }
+        let result = String(scalars)
+        return result.isEmpty ? "unknown" : result
     }
 
     private func replaceItemAtomically(source: URL, destination: URL) throws {

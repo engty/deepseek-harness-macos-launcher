@@ -163,6 +163,18 @@ final class LauncherModel: ObservableObject {
                 paths: paths,
                 runtimeRoot: installation.root
             )
+            // A profile created by an older Runtime may contain a hoisted
+            // official dsh-llm directory. Node resolves it before the active
+            // Runtime and the modern server then loses /api/llm/* routes.
+            // Re-point that one core module before loading any plugin entry.
+            _ = try defaultProfileInstaller.syncRuntimeCoreModuleCompatibility(
+                paths: paths,
+                runtimeRoot: installation.root
+            )
+            _ = try defaultProfileInstaller.syncDshLlmCodexCompatibility(
+                paths: paths,
+                runtimeRoot: installation.root
+            )
             // dsh-mnemon 0.3.5 ships the newer projection descriptor shape,
             // while the bundled 0.1.0-rc.6 Runtime still reads `schema` and
             // top-level `view`. Adapt only that known package/version before
@@ -1158,6 +1170,24 @@ final class LauncherModel: ObservableObject {
 
             // Always boot the new Runtime against a clone of the user's real
             // profile, even when the App was stopped before the update.
+            _ = try defaultProfileInstaller.syncRuntimeCoreModuleCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                ),
+                runtimeRoot: newActivation.installation.root,
+                quarantineRoot: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web/.dsh-legacy-core",
+                    isDirectory: true
+                )
+            )
+            _ = try defaultProfileInstaller.syncDshLlmCodexCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                ),
+                runtimeRoot: newActivation.installation.root
+            )
             _ = try defaultProfileInstaller.syncDshMnemonProjectionCompatibility(
                 profileWeb: candidateSlot.appendingPathComponent(
                     "dsh-home/profiles/web",
