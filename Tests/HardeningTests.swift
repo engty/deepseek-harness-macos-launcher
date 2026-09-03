@@ -12,6 +12,8 @@ struct StrictSemanticVersionTests {
         #expect(StrictSemanticVersion(rawValue: "1.0.0-rc.6")?.description == "1.0.0-rc.6")
         #expect(StrictSemanticVersion(rawValue: "1.0.0-alpha")! < StrictSemanticVersion(rawValue: "1.0.0")!)
         #expect(StrictSemanticVersion(rawValue: "1.0.0-alpha.1")! < StrictSemanticVersion(rawValue: "1.0.0-beta.1")!)
+        #expect(StrictSemanticVersion(rawValue: "1.0.0-alpha.1")!.isAlphaPrerelease)
+        #expect(!StrictSemanticVersion(rawValue: "1.0.0-rc.1")!.isAlphaPrerelease)
         #expect(StrictSemanticVersion(rawValue: "1.0.0-rc.1")! < StrictSemanticVersion(rawValue: "1.0.0-rc.2")!)
         #expect(StrictSemanticVersion(rawValue: "1.0.1")! > StrictSemanticVersion(rawValue: "1.0.0-rc.6")!)
     }

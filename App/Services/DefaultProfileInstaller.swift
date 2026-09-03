@@ -179,6 +179,87 @@ struct DefaultProfileInstaller {
         return true
     }
 
+    /// Newer Harness Runtime Sessions expose their durable history through
+    /// `snapshotEvents()` instead of the former iterable `events` property.
+    /// Vision Toolkit 0.1.39 reads that history while each Agent is created;
+    /// the old access therefore aborts every new session before it can be
+    /// attached to a Workspace. Keep the adapter source-compatible with both
+    /// contracts so a Runtime upgrade cannot disable session creation.
+    @discardableResult
+    func syncVisionToolkitSessionCompatibility(paths: AppPaths) throws -> Bool {
+        try syncVisionToolkitSessionCompatibility(profileWeb: paths.profileWeb)
+    }
+
+    /// Staged-slot variant used by Runtime update preflight. The patch stays
+    /// within the candidate profile until the candidate has successfully
+    /// started, so a failed update cannot change the active user profile.
+    @discardableResult
+    func syncVisionToolkitSessionCompatibility(profileWeb: URL) throws -> Bool {
+        let packageDirectory = profileWeb
+            .appendingPathComponent(
+                "node_modules/@anionex/dsh-vision-toolkit",
+                isDirectory: true
+            )
+            .resolvingSymlinksInPath()
+        let manifestURL = packageDirectory.appendingPathComponent("package.json")
+        guard fileManager.fileExists(atPath: manifestURL.path),
+              let identity = packageNameAndVersion(at: manifestURL),
+              identity.0 == "@anionex/dsh-vision-toolkit" else {
+            return false
+        }
+
+        let sourceURL = packageDirectory.appendingPathComponent("lib/exposure.js")
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8),
+              let adapted = Self.adaptVisionToolkitSessionSource(source),
+              adapted != source else {
+            return false
+        }
+        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
+        AppLogger.plugins.info(
+            "Applied Vision Toolkit session-history compatibility."
+        )
+        return true
+    }
+
+    /// Recent dsh-mnemon releases still read the former `session.events` array from
+    /// its lifecycle hooks. Modern Harness Runtimes replaced that property
+    /// with `snapshotEvents()`. Unlike the Vision Toolkit's single startup
+    /// probe, Mnemon reads the event log throughout a session, so every known
+    /// read site is routed through one small compatibility helper. The helper
+    /// keeps old Runtimes working and returns an empty history only when a
+    /// malformed session provides neither contract.
+    @discardableResult
+    func syncDshMnemonSessionCompatibility(paths: AppPaths) throws -> Bool {
+        try syncDshMnemonSessionCompatibility(profileWeb: paths.profileWeb)
+    }
+
+    /// Applies the Mnemon session-log bridge to either the active profile or
+    /// an isolated candidate profile used by plugin and Runtime preflight.
+    @discardableResult
+    func syncDshMnemonSessionCompatibility(profileWeb: URL) throws -> Bool {
+        let packageDirectory = profileWeb
+            .appendingPathComponent("node_modules/dsh-mnemon", isDirectory: true)
+            .resolvingSymlinksInPath()
+        let manifestURL = packageDirectory.appendingPathComponent("package.json")
+        guard fileManager.fileExists(atPath: manifestURL.path),
+              let identity = packageNameAndVersion(at: manifestURL),
+              identity.0 == "dsh-mnemon" else {
+            return false
+        }
+
+        let sourceURL = packageDirectory.appendingPathComponent("lib/index.js")
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8),
+              let adapted = Self.adaptDshMnemonSessionSource(source),
+              adapted != source else {
+            return false
+        }
+        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
+        AppLogger.plugins.info(
+            "Applied dsh-mnemon session-history compatibility."
+        )
+        return true
+    }
+
     @discardableResult
     func seedIfNeeded(paths: AppPaths, runtimeRoot: URL) throws -> Bool {
         let manifestURL = paths.profileWeb.appendingPathComponent("package.json")
@@ -244,7 +325,7 @@ struct DefaultProfileInstaller {
 
     /// Bridges the dsh-mnemon projection descriptor between the two Runtime
     /// contracts currently in the wild. Harness Runtime 0.1.0-rc.6 expects
-    /// `schema` and a top-level `view`; dsh-mnemon 0.3.5 was published with
+    /// `schema` and a top-level `view`; recent dsh-mnemon releases use
     /// the newer `stateSchema`/`wire.viewSchema` shape. The latter makes the
     /// old Runtime throw while serving `session.history`, which leaves a
     /// completed turn with no visible messages. The transform is deliberately
@@ -330,12 +411,14 @@ struct DefaultProfileInstaller {
             return false
         }
 
-        let forkPackage = runtimeRoot
-            .appendingPathComponent(
-                "node_modules/@deepseek-ai/dsh-subagent-fork-in-process",
-                isDirectory: true
-            )
-            .resolvingSymlinksInPath()
+        // Recent pnpm Runtime layouts no longer hoist this package at
+        // `node_modules/@deepseek-ai/...`; resolve it through the same
+        // Runtime-package lookup used for the core LLM module so the review
+        // filter survives a Runtime upgrade.
+        let forkPackage = try runtimePackageDirectory(
+            named: "dsh-subagent-fork-in-process",
+            runtimeRoot: runtimeRoot
+        )
         let mnemonSourceURL = mnemonPackage.appendingPathComponent("lib/index.js")
         let forkSourceURL = forkPackage.appendingPathComponent("lib/index.js")
         guard let mnemonSource = try? String(contentsOf: mnemonSourceURL, encoding: .utf8),
@@ -436,6 +519,49 @@ struct DefaultProfileInstaller {
 """
         guard source.contains(original) else { return nil }
         return source.replacingOccurrences(of: original, with: replacement)
+    }
+
+    private static func adaptVisionToolkitSessionSource(_ source: String) -> String? {
+        let legacyLoop = "for (const event of session.events) {"
+        let compatibleLoop = """
+        const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : session.events;
+            for (const event of events) {
+        """
+        guard source.contains(legacyLoop),
+              !source.contains("session.snapshotEvents === 'function'") else {
+            return nil
+        }
+        return source.replacingOccurrences(of: legacyLoop, with: compatibleLoop)
+    }
+
+    private static func adaptDshMnemonSessionSource(_ source: String) -> String? {
+        let marker = "function dshMnemonSessionEvents(session)"
+        guard !source.contains(marker),
+              source.contains("this.agent.session.events") || source.contains("run.localAgent?.session.events") else {
+            return nil
+        }
+
+        let helper = """
+        function dshMnemonSessionEvents(session) {
+        \tconst events = typeof session?.snapshotEvents === "function" ? session.snapshotEvents() : session?.events;
+        \treturn Array.isArray(events) ? events : [];
+        }
+
+        """
+        let anchor = "const MNEMON_READ_CHANNEL = \"/dsh-mnemon-read\";"
+        guard source.contains(anchor) else { return nil }
+
+        let adapted = source
+            .replacingOccurrences(
+                of: "run.localAgent?.session.events ?? []",
+                with: "dshMnemonSessionEvents(run.localAgent?.session)"
+            )
+            .replacingOccurrences(
+                of: "this.agent.session.events",
+                with: "dshMnemonSessionEvents(this.agent.session)"
+            )
+            .replacingOccurrences(of: anchor, with: helper + anchor)
+        return adapted == source ? nil : adapted
     }
 
     private static func adaptDshMnemonForkSource(_ source: String) -> String? {

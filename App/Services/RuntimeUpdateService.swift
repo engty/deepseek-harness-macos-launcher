@@ -15,6 +15,10 @@ struct RuntimeUpdateResult {
         }
         return true
     }
+
+    var isAlphaHarnessPrerelease: Bool {
+        StrictSemanticVersion(rawValue: manifest.harness.version)?.isAlphaPrerelease ?? false
+    }
 }
 
 @MainActor

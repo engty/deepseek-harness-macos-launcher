@@ -55,7 +55,7 @@ jobs:
       # npm may resolve a large Harness dependency graph; the default Node.js
       # heap on GitHub's runner is too small for this installation.
       NODE_OPTIONS: --max-old-space-size=4096
-      MNEMON_VERSION: '0.2.5'
+      MNEMON_VERSION: '0.2.7'
     steps:
       - name: Check out source
         uses: actions/checkout@v4

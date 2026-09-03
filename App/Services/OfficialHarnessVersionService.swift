@@ -22,6 +22,7 @@ enum OfficialHarnessVersionError: LocalizedError, Equatable {
     case invalidResponse
     case invalidJSON
     case invalidVersion
+    case noEligibleVersion
 
     var errorDescription: String? {
         switch self {
@@ -33,6 +34,8 @@ enum OfficialHarnessVersionError: LocalizedError, Equatable {
             return "官方 Harness 版本信息不是有效 JSON。"
         case .invalidVersion:
             return "官方 Harness 返回的版本号无法识别。"
+        case .noEligibleVersion:
+            return "官方 Harness 暂无符合当前更新策略的版本。"
         }
     }
 }
@@ -69,7 +72,10 @@ final class OfficialHarnessVersionService {
         }
     }
 
-    func check() async throws -> OfficialHarnessVersionResult {
+    /// Automatic notification checks exclude alpha prereleases. A manual
+    /// check can still include them, preserving access to preview builds when
+    /// the user explicitly asks to inspect every published version.
+    func check(includingAlpha: Bool = true) async throws -> OfficialHarnessVersionResult {
         guard let endpoint, endpoint.scheme == "https" else {
             throw OfficialHarnessVersionError.invalidURL
         }
@@ -99,8 +105,14 @@ final class OfficialHarnessVersionService {
         let candidates = payload.versions?.keys.compactMap(StrictSemanticVersion.init)
             ?? payload.version.flatMap { StrictSemanticVersion(rawValue: $0).map { [$0] } }
             ?? []
-        guard let version = candidates.max()?.description else {
+        guard !candidates.isEmpty else {
             throw OfficialHarnessVersionError.invalidVersion
+        }
+        let eligibleCandidates = includingAlpha
+            ? candidates
+            : candidates.filter { !$0.isAlphaPrerelease }
+        guard let version = eligibleCandidates.max()?.description else {
+            throw OfficialHarnessVersionError.noEligibleVersion
         }
 
         return OfficialHarnessVersionResult(version: version, packageURL: Self.packageURL)

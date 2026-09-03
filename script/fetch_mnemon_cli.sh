@@ -5,11 +5,11 @@ set -euo pipefail
 # archive is verified against the upstream checksums file before extraction;
 # no global package manager or shell configuration is touched.
 DESTINATION_ROOT="${1:-}"
-VERSION="${HARNESS_MNEMON_VERSION:-0.2.5}"
+VERSION="${HARNESS_MNEMON_VERSION:-0.2.7}"
 ARCHITECTURE="${HARNESS_MNEMON_ARCH:-$(uname -m)}"
 
 if [[ -z "$DESTINATION_ROOT" ]]; then
-  echo "usage: HARNESS_MNEMON_VERSION=0.2.5 $0 /path/to/runtime/bin" >&2
+  echo "usage: HARNESS_MNEMON_VERSION=0.2.7 $0 /path/to/runtime/bin" >&2
   exit 2
 fi
 

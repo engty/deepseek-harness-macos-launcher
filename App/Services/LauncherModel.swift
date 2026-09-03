@@ -175,6 +175,12 @@ final class LauncherModel: ObservableObject {
                 paths: paths,
                 runtimeRoot: installation.root
             )
+            _ = try defaultProfileInstaller.syncVisionToolkitSessionCompatibility(
+                paths: paths
+            )
+            _ = try defaultProfileInstaller.syncDshMnemonSessionCompatibility(
+                paths: paths
+            )
             // dsh-mnemon 0.3.5 ships the newer projection descriptor shape,
             // while the bundled 0.1.0-rc.6 Runtime still reads `schema` and
             // top-level `view`. Adapt only that known package/version before
@@ -974,7 +980,9 @@ final class LauncherModel: ObservableObject {
         }
 
         guard requestID == updateRequestID else { return }
-        if let result = manifestResult, result.isUpdateAvailable {
+        if let result = manifestResult,
+           result.isUpdateAvailable,
+           !(notifyAvailable && result.isAlphaHarnessPrerelease) {
             latestManifest = result.manifest
             latestOfficialHarnessVersion = nil
             updateState = .available(result.manifest.runtimeID)
@@ -991,7 +999,9 @@ final class LauncherModel: ObservableObject {
         // published a newer Harness package, even before our verified bundle
         // has finished building.
         do {
-            let official = try await officialHarnessVersionService.check()
+            let official = try await officialHarnessVersionService.check(
+                includingAlpha: !notifyAvailable
+            )
             guard requestID == updateRequestID else { return }
             latestOfficialHarnessVersion = official
             if official.isUpdateAvailable(currentHarnessVersion: runtimeVersion) {
@@ -1013,6 +1023,10 @@ final class LauncherModel: ObservableObject {
                     )
                 }
             }
+        } catch OfficialHarnessVersionError.noEligibleVersion where notifyAvailable {
+            latestManifest = nil
+            latestOfficialHarnessVersion = nil
+            updateState = .upToDate
         } catch {
             guard requestID == updateRequestID else { return }
             latestManifest = nil
@@ -1187,6 +1201,18 @@ final class LauncherModel: ObservableObject {
                     isDirectory: true
                 ),
                 runtimeRoot: newActivation.installation.root
+            )
+            _ = try defaultProfileInstaller.syncVisionToolkitSessionCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                )
+            )
+            _ = try defaultProfileInstaller.syncDshMnemonSessionCompatibility(
+                profileWeb: candidateSlot.appendingPathComponent(
+                    "dsh-home/profiles/web",
+                    isDirectory: true
+                )
             )
             _ = try defaultProfileInstaller.syncDshMnemonProjectionCompatibility(
                 profileWeb: candidateSlot.appendingPathComponent(

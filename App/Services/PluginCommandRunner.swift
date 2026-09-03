@@ -150,6 +150,38 @@ final class PluginCommandRunner {
             throw PluginCommandError.nonZeroExit("插件配置预检失败，当前 profile 未改变。")
         }
 
+        // pnpm can rebuild hoisted links while it changes a plugin. Reapply
+        // every App-owned Runtime bridge to the candidate before its first
+        // boot, so an otherwise valid plugin update cannot revive an old core
+        // module or adapter and then fail the candidate preflight.
+        let compatibilityInstaller = DefaultProfileInstaller()
+        _ = try compatibilityInstaller.syncRuntimeCoreModuleCompatibility(
+            profileWeb: stagingProfile,
+            runtimeRoot: installation.root,
+            quarantineRoot: stagingProfile.appendingPathComponent(
+                ".dsh-legacy-core",
+                isDirectory: true
+            )
+        )
+        _ = try compatibilityInstaller.syncDshLlmCodexCompatibility(
+            profileWeb: stagingProfile,
+            runtimeRoot: installation.root
+        )
+        _ = try compatibilityInstaller.syncDshMnemonSessionCompatibility(
+            profileWeb: stagingProfile
+        )
+        _ = try compatibilityInstaller.syncDshMnemonProjectionCompatibility(
+            profileWeb: stagingProfile,
+            runtimeVersion: installation.version
+        )
+        _ = try compatibilityInstaller.syncDshMnemonTextOnlyReviewCompatibility(
+            profileWeb: stagingProfile,
+            runtimeRoot: installation.root
+        )
+        _ = try compatibilityInstaller.syncVisionToolkitSessionCompatibility(
+            profileWeb: stagingProfile
+        )
+
         let candidateController = HarnessProcessController()
         do {
             _ = try await candidateController.start(

@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ROOT="${1:-${HARNESS_RUNTIME_SOURCE:-}}"
 NODE_PATH="${HARNESS_NODE_PATH:-$(command -v node || true)}"
 DESTINATION="$ROOT_DIR/Resources/runtime"
-DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.3.5}"
+DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2
@@ -89,7 +89,7 @@ echo "内置 Node 探针通过：$NODE_VERSION_OUTPUT"
 DEFAULT_PROFILE_HOME="$STAGING_ROOT/runtime/default-profile"
 DEFAULT_RUNTIME_PATH="$STAGING_ROOT/runtime/bin:$STAGING_ROOT/runtime/node/bin:$STAGING_ROOT/runtime/node_modules/.bin:/usr/bin:/bin"
 read -r -a DEFAULT_PLUGIN_SPEC_LIST <<< "$DEFAULT_PLUGIN_SPECS"
-if [[ " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" dsh-mnemon@0.3.5 "* ]]; then
+if [[ " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" dsh-mnemon@0.4.6 "* ]]; then
   [[ -x "$STAGING_ROOT/runtime/bin/mnemon" ]] || {
     echo "默认 profile 包含 dsh-mnemon，但 Runtime 中没有私有 Mnemon CLI；请先运行 script/fetch_mnemon_cli.sh。" >&2
     exit 2

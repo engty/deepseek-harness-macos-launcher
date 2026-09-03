@@ -152,6 +152,29 @@ struct RuntimeManifestTests {
 
     @Test
     @MainActor
+    func officialHarnessVersionServiceSkipsAlphaForAutomaticChecks() async throws {
+        let endpoint = URL(string: "https://updates.example.com/npm-dsh-alpha-policy")!
+        URLProtocolStub.responses = [
+            endpoint: (
+                200,
+                Data(#"{"versions":{"0.1.2-rc.3":{},"0.1.3-alpha.1":{}}}"#.utf8)
+            )
+        ]
+        defer { URLProtocolStub.responses = [:] }
+
+        let configuration = URLSessionConfiguration.ephemeral
+        configuration.protocolClasses = [URLProtocolStub.self]
+        let service = OfficialHarnessVersionService(
+            environment: ["HARNESS_OFFICIAL_VERSION_URL": endpoint.absoluteString],
+            session: URLSession(configuration: configuration)
+        )
+
+        #expect(try await service.check().version == "0.1.3-alpha.1")
+        #expect(try await service.check(includingAlpha: false).version == "0.1.2-rc.3")
+    }
+
+    @Test
+    @MainActor
     func officialHarnessVersionServiceRejectsMalformedVersion() async throws {
         let endpoint = URL(string: "https://updates.example.com/npm-dsh-invalid")!
         URLProtocolStub.responses = [
@@ -603,6 +626,83 @@ struct RuntimeManifestTests {
     }
 
     @Test
+    func adaptsVisionToolkitSessionHistoryForModernRuntime() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let packageDirectory = paths.profileWeb.appendingPathComponent(
+            "node_modules/@anionex/dsh-vision-toolkit",
+            isDirectory: true
+        )
+        let sourceURL = packageDirectory.appendingPathComponent("lib/exposure.js")
+        try fileManager.createDirectory(at: sourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"name":"@anionex/dsh-vision-toolkit","version":"0.1.39"}"#.utf8)
+            .write(to: packageDirectory.appendingPathComponent("package.json"))
+        let source = [
+            "function hasLoadedVisionSkill(session) {",
+            "    for (const event of session.events) {",
+            "        consume(event);",
+            "    }",
+            "}"
+        ].joined(separator: "\n")
+        try Data(source.utf8).write(to: sourceURL)
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.syncVisionToolkitSessionCompatibility(paths: paths))
+        let adapted = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(adapted.contains("session.snapshotEvents === 'function'"))
+        #expect(adapted.contains("for (const event of events)"))
+        #expect(!(try installer.syncVisionToolkitSessionCompatibility(paths: paths)))
+    }
+
+    @Test
+    func adaptsDshMnemonSessionHistoryForModernRuntime() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let packageDirectory = paths.profileWeb.appendingPathComponent(
+            "node_modules/dsh-mnemon",
+            isDirectory: true
+        )
+        let sourceURL = packageDirectory.appendingPathComponent("lib/index.js")
+        try fileManager.createDirectory(at: sourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"name":"dsh-mnemon","version":"0.3.5"}"#.utf8)
+            .write(to: packageDirectory.appendingPathComponent("package.json"))
+        let source = [
+            "const MNEMON_READ_CHANNEL = \"/dsh-mnemon-read\";",
+            "function snapshot() { return memoryToolCalls(this.agent.session.events); }",
+            "function openTurn() { for (const event of this.agent.session.events) consume(event); }",
+            "function cue(sequence) { return this.agent.session.events[sequence]; }",
+            "function failure(run) { return run.localAgent?.session.events ?? []; }"
+        ].joined(separator: "\\n")
+        try Data(source.utf8).write(to: sourceURL)
+
+        let installer = DefaultProfileInstaller(fileManager: fileManager)
+        #expect(try installer.syncDshMnemonSessionCompatibility(paths: paths))
+        let adapted = try String(contentsOf: sourceURL, encoding: .utf8)
+        #expect(adapted.contains("function dshMnemonSessionEvents(session)"))
+        #expect(adapted.contains("session.snapshotEvents()"))
+        #expect(!adapted.contains("this.agent.session.events"))
+        #expect(adapted.contains("dshMnemonSessionEvents(run.localAgent?.session)"))
+        #expect(!(try installer.syncDshMnemonSessionCompatibility(paths: paths)))
+    }
+
+    @Test
     func filtersImagesOnlyForFixedModelMnemonReviews() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -633,9 +733,11 @@ struct RuntimeManifestTests {
         try Data(mnemonSource.utf8).write(to: mnemonSourceURL)
 
         let forkSourceURL = runtimeRoot.appendingPathComponent(
-            "node_modules/@deepseek-ai/dsh-subagent-fork-in-process/lib/index.js"
+            "node_modules/.pnpm/node_modules/@deepseek-ai/dsh-subagent-fork-in-process/lib/index.js"
         )
         try fileManager.createDirectory(at: forkSourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try Data(#"{"name":"@deepseek-ai/dsh-subagent-fork-in-process","version":"0.1.2-rc.1"}"#.utf8)
+            .write(to: forkSourceURL.deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("package.json"))
         let forkSource = [
             "function completedTurnPrefix(parent) { return parent.session.events; }",
             "var ForkInProcessProvider = class {",

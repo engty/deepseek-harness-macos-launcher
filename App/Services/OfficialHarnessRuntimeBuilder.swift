@@ -137,6 +137,20 @@ final class OfficialHarnessRuntimeBuilder {
                 ),
                 runtimeRoot: stagedRuntime
             )
+        _ = try DefaultProfileInstaller(fileManager: fileManager)
+            .syncVisionToolkitSessionCompatibility(
+                profileWeb: stagedRuntime.appendingPathComponent(
+                    "default-profile/profiles/web",
+                    isDirectory: true
+                )
+            )
+        _ = try DefaultProfileInstaller(fileManager: fileManager)
+            .syncDshMnemonSessionCompatibility(
+                profileWeb: stagedRuntime.appendingPathComponent(
+                    "default-profile/profiles/web",
+                    isDirectory: true
+                )
+            )
 
         progress(.verifying)
         let locator = RuntimeLocator(environment: [

@@ -72,6 +72,13 @@ struct StrictSemanticVersion: Comparable, CustomStringConvertible {
         return prerelease.isEmpty ? base : "\(base)-\(prerelease.joined(separator: "."))"
     }
 
+    /// Automatic Runtime prompts intentionally skip alpha builds. Release
+    /// candidates remain eligible because they are the project's normal
+    /// public test channel; only an explicit alpha prerelease is withheld.
+    var isAlphaPrerelease: Bool {
+        prerelease.contains { $0.lowercased().hasPrefix("alpha") }
+    }
+
     static func < (lhs: StrictSemanticVersion, rhs: StrictSemanticVersion) -> Bool {
         if lhs.major != rhs.major { return lhs.major < rhs.major }
         if lhs.minor != rhs.minor { return lhs.minor < rhs.minor }
