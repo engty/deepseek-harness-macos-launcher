@@ -39,6 +39,7 @@ final class LauncherModel: ObservableObject {
     private let balanceService: DeepSeekBalanceService
     private let deepSeekCredentialStore = DeepSeekCredentialStore()
     private let deepSeekRechargeURL = URL(string: "https://platform.deepseek.com/usage")!
+    private let runtimeUpdateSkipStore = RuntimeUpdateSkipStore()
     private let balanceKeychain = KeychainStore(
         service: AppPaths.bundleIdentifier + ".credentials.v2",
         account: DeepSeekCredentialStore.reference
@@ -988,7 +989,8 @@ final class LauncherModel: ObservableObject {
             updateState = .available(result.manifest.runtimeID)
             if presentResult {
                 presentUpdateAlert(result)
-            } else if notifyAvailable, shouldNotifyUpdate(key: "runtime:\(result.manifest.runtimeID)") {
+            } else if notifyAvailable,
+                      shouldNotifyUpdate(key: "runtime:\(result.manifest.channel):\(result.manifest.runtimeID)") {
                 presentUpdateAlert(result)
             }
             return
@@ -1039,6 +1041,7 @@ final class LauncherModel: ObservableObject {
     }
 
     private func shouldNotifyUpdate(key: String) -> Bool {
+        guard !runtimeUpdateSkipStore.contains(key) else { return false }
         guard lastNotifiedUpdateKey != key else { return false }
         lastNotifiedUpdateKey = key
         return true
@@ -1154,6 +1157,11 @@ final class LauncherModel: ObservableObject {
         let previousInstallation = try? locator.locate()
         var activation: RuntimeActivation?
         var dataActivation: DataSlotActivation?
+        var managedPluginIDs: [String] = []
+        var candidateOverlayProjection: PluginOverlayProjection?
+        var candidateOverlayURL = profileManager.overlayURLIfNeeded()
+        var originalOverlayData: Data?
+        var appliedCandidateOverlay = false
         runtimeUpdateStage = .activating
         phase = .busy("Updating DeepSeek Harness")
         if wasRunning { await processController.stop() }
@@ -1182,13 +1190,78 @@ final class LauncherModel: ObservableObject {
                 currentDirectory: basePreflightRoot
             )
 
+            let candidateProfile = candidateSlot.appendingPathComponent(
+                "dsh-home/profiles/web",
+                isDirectory: true
+            )
+            let installedPluginIDs = RuntimeManagedPluginMaintenance.installedPluginIDs(
+                in: candidateProfile
+            )
+            managedPluginIDs = RuntimeManagedPluginMaintenance.managedPluginIDs(
+                installedPluginIDs: installedPluginIDs
+            )
+            let managedPluginArguments = RuntimeManagedPluginMaintenance.updateArguments(
+                installedPluginIDs: installedPluginIDs
+            )
+            if !managedPluginArguments.isEmpty {
+                runtimeUpdateStage = .updatingManagedPlugins
+                phase = .busy("正在同步更新记忆和视觉插件")
+                originalOverlayData = try profileManager.overlaySnapshot()
+                let dependencyPlan = try pluginRunner.dependencyPlan(
+                    installation: newActivation.installation,
+                    paths: paths,
+                    arguments: managedPluginArguments
+                )
+                // Reuse the Runtime candidate slot instead of the normal
+                // plugin flow's active-slot mutation. Both the Runtime and
+                // these managed plugins therefore commit or roll back as one
+                // transaction, and an explicit prior removal stays removed.
+                do {
+                    _ = try await pluginRunner.mutateProfile(
+                        installation: newActivation.installation,
+                        paths: paths,
+                        arguments: managedPluginArguments,
+                        dependencyPlan: dependencyPlan,
+                        candidateSlotOverride: candidateSlot,
+                        activateCandidate: false,
+                        runCandidatePreflight: false
+                    )
+                } catch let PluginCommandError.buildScriptsRequireApproval(packages, output) {
+                    guard confirmBuildScriptApproval(packages: packages) else {
+                        throw PluginCommandError.buildScriptsRequireApproval(packages, output: output)
+                    }
+                    _ = try await pluginRunner.mutateProfile(
+                        installation: newActivation.installation,
+                        paths: paths,
+                        arguments: managedPluginArguments,
+                        dependencyPlan: dependencyPlan,
+                        allowedBuildScripts: packages,
+                        candidateSlotOverride: candidateSlot,
+                        activateCandidate: false,
+                        runCandidatePreflight: false
+                    )
+                }
+
+                // The disable overlay lives outside the data slot. Project it
+                // against the updated candidate before booting, then make it
+                // live only after candidate startup and data activation pass.
+                let projection = profileManager.projectOverlay(
+                    forCandidateProfile: candidateProfile,
+                    replacingPluginIDs: Set(managedPluginIDs)
+                )
+                candidateOverlayProjection = projection
+                candidateOverlayURL = try profileManager.writeOverlay(
+                    projection,
+                    to: basePreflightRoot.appendingPathComponent(
+                        "candidate-plugin-overlay.cordis.patch.yml"
+                    )
+                )
+            }
+
             // Always boot the new Runtime against a clone of the user's real
             // profile, even when the App was stopped before the update.
             _ = try defaultProfileInstaller.syncRuntimeCoreModuleCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                ),
+                profileWeb: candidateProfile,
                 runtimeRoot: newActivation.installation.root,
                 quarantineRoot: candidateSlot.appendingPathComponent(
                     "dsh-home/profiles/web/.dsh-legacy-core",
@@ -1196,36 +1269,21 @@ final class LauncherModel: ObservableObject {
                 )
             )
             _ = try defaultProfileInstaller.syncDshLlmCodexCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                ),
+                profileWeb: candidateProfile,
                 runtimeRoot: newActivation.installation.root
             )
             _ = try defaultProfileInstaller.syncVisionToolkitSessionCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                )
+                profileWeb: candidateProfile
             )
             _ = try defaultProfileInstaller.syncDshMnemonSessionCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                )
+                profileWeb: candidateProfile
             )
             _ = try defaultProfileInstaller.syncDshMnemonProjectionCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                ),
+                profileWeb: candidateProfile,
                 runtimeVersion: newActivation.installation.version ?? manifest.harness.version
             )
             _ = try defaultProfileInstaller.syncDshMnemonTextOnlyReviewCompatibility(
-                profileWeb: candidateSlot.appendingPathComponent(
-                    "dsh-home/profiles/web",
-                    isDirectory: true
-                ),
+                profileWeb: candidateProfile,
                 runtimeRoot: newActivation.installation.root
             )
             runtimeUpdateStage = .testing
@@ -1234,7 +1292,7 @@ final class LauncherModel: ObservableObject {
                 _ = try await candidateController.start(
                     installation: newActivation.installation,
                     paths: paths,
-                    overlayURL: profileManager.overlayURLIfNeeded(),
+                    overlayURL: candidateOverlayURL,
                     dshHomeOverride: candidateSlot.appendingPathComponent("dsh-home", isDirectory: true),
                     currentDirectoryOverride: candidateSlot
                 )
@@ -1256,6 +1314,11 @@ final class LauncherModel: ObservableObject {
             try dataSlotManager.validateCandidateModuleLinks(candidateSlot: candidateSlot)
 
             dataActivation = try dataSlotManager.activate(candidateSlot: candidateSlot, paths: paths)
+            if let candidateOverlayProjection {
+                try profileManager.applyOverlay(candidateOverlayProjection)
+                appliedCandidateOverlay = true
+            }
+            plugins = profileManager.refresh()
             if wasRunning {
                 let url = try await processController.start(
                     installation: newActivation.installation,
@@ -1272,18 +1335,38 @@ final class LauncherModel: ObservableObject {
             runtimeInstaller.cleanupOrphanedRuntimes(paths: paths)
             updateState = .downloaded(artifactURL.path)
             runtimeUpdateStage = .completed
+            let managedPluginSummary = plugins
+                .filter { managedPluginIDs.contains($0.id) }
+                .map { "\($0.id) \($0.version)" }
+                .joined(separator: "、")
+            let completionMessage: String
+            if managedPluginIDs.isEmpty {
+                completionMessage = "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。未检测到已安装的记忆或视觉插件，因此没有自动重新安装。"
+            } else {
+                let summary = managedPluginSummary.isEmpty
+                    ? managedPluginIDs.joined(separator: "、")
+                    : managedPluginSummary
+                completionMessage = "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。已同步更新：\(summary)。"
+            }
             presentInfoAlert(
                 title: "DeepSeek Harness 已更新",
-                message: "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。"
+                message: completionMessage
             )
             runtimeUpdateStage = nil
         } catch {
+            if processController.isRunning {
+                await processController.stop()
+            }
             if let dataActivation {
                 try? dataSlotManager.rollback(dataActivation, paths: paths)
+            }
+            if appliedCandidateOverlay {
+                try? profileManager.restoreOverlay(originalOverlayData)
             }
             if let activation {
                 try? runtimeInstaller.rollback(activation: activation, paths: paths)
             }
+            plugins = profileManager.refresh()
             lastError = error.localizedDescription
             updateState = .failed(error.localizedDescription)
             runtimeUpdateStage = nil
@@ -1319,8 +1402,13 @@ final class LauncherModel: ObservableObject {
         }
         alert.alertStyle = .informational
         alert.addButton(withTitle: "立即更新")
-        alert.addButton(withTitle: "稍后")
-        return alert.runModal() == .alertFirstButtonReturn
+        alert.addButton(withTitle: "暂不更新")
+        alert.addButton(withTitle: "跳过此次更新")
+        let response = alert.runModal()
+        if response == .alertThirdButtonReturn {
+            runtimeUpdateSkipStore.skip("runtime:\(manifest.channel):\(manifest.runtimeID)")
+        }
+        return response == .alertFirstButtonReturn
     }
 
     private func presentUpdateAlert(_ result: RuntimeUpdateResult) {
@@ -1330,8 +1418,12 @@ final class LauncherModel: ObservableObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "立即更新")
         alert.addButton(withTitle: "暂不更新")
-        if alert.runModal() == .alertFirstButtonReturn {
+        alert.addButton(withTitle: "跳过此次更新")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
             scheduleRuntimeUpdateFromAlert()
+        } else if response == .alertThirdButtonReturn {
+            runtimeUpdateSkipStore.skip("runtime:\(result.manifest.channel):\(result.manifest.runtimeID)")
         }
     }
 
@@ -1342,8 +1434,12 @@ final class LauncherModel: ObservableObject {
         alert.alertStyle = .informational
         alert.addButton(withTitle: "立即更新")
         alert.addButton(withTitle: "暂不更新")
-        if alert.runModal() == .alertFirstButtonReturn {
+        alert.addButton(withTitle: "跳过此次更新")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
             scheduleRuntimeUpdateFromAlert()
+        } else if response == .alertThirdButtonReturn {
+            runtimeUpdateSkipStore.skip("official:\(result.version)")
         }
     }
 

@@ -70,7 +70,10 @@ final class PluginCommandRunner {
         paths: AppPaths,
         arguments: [String],
         dependencyPlan: PluginDependencyPlan? = nil,
-        allowedBuildScripts: [String] = []
+        allowedBuildScripts: [String] = [],
+        candidateSlotOverride: URL? = nil,
+        activateCandidate: Bool = true,
+        runCandidatePreflight: Bool = true
     ) async throws -> PluginCommandResult {
         let dependencyPlan = try dependencyPlan ?? self.dependencyPlan(
             installation: installation,
@@ -78,11 +81,24 @@ final class PluginCommandRunner {
             arguments: arguments
         )
         let dataSlotManager = DataSlotManager()
-        let stagingSlot = try await dataSlotManager.cloneActiveSlot(paths: paths)
-        let stagingRoot = stagingSlot.deletingLastPathComponent()
-        // The private staging copy is removed on every exit path after this
-        // point; only the slot that was actually activated survives.
-        defer { try? FileManager.default.removeItem(at: stagingRoot) }
+        let ownsStagingSlot = candidateSlotOverride == nil
+        let stagingSlot: URL
+        if let candidateSlotOverride {
+            stagingSlot = candidateSlotOverride
+        } else {
+            stagingSlot = try await dataSlotManager.cloneActiveSlot(paths: paths)
+        }
+        let stagingRootToRemove = ownsStagingSlot
+            ? stagingSlot.deletingLastPathComponent()
+            : nil
+        // The standard plugin mutation owns its staging copy. A Runtime
+        // upgrade can instead provide its own candidate slot so the Runtime
+        // and its managed plugins are verified and activated atomically.
+        defer {
+            if let stagingRootToRemove {
+                try? FileManager.default.removeItem(at: stagingRootToRemove)
+            }
+        }
         let stagingHome = stagingSlot.appendingPathComponent("dsh-home", isDirectory: true)
         let stagingProfile = stagingHome.appendingPathComponent("profiles/web", isDirectory: true)
         let metadataStore = PluginMetadataStore()
@@ -116,38 +132,17 @@ final class PluginCommandRunner {
             logURL: paths.pluginOperationsLog
         )
 
-        guard result.status == 0 else {
-            if let packages = Self.parseBuildApprovalPackages(result.output) {
-                throw PluginCommandError.buildScriptsRequireApproval(
-                    packages,
-                    output: Self.redact(result.output)
-                )
-            }
-            throw PluginCommandError.nonZeroExit(Self.redact(result.output))
-        }
-
-        let preflight = try await run(
-            installation: installation,
-            arguments: ["--profile", "web", "--dump-config"],
-            environment: PluginDependencyService(
-                privateToolchainRoot: paths.toolchain
-            ).applying(
-                plan: dependencyPlan,
-                additions: [
-                    "DSH_HOME": stagingHome.path,
-                    "DSH_LAUNCHER": "DeepSeekHarness",
-                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
-                ]
-            ),
-            currentDirectory: stagingProfile,
-            logURL: paths.pluginOperationsLog
-        )
-        guard preflight.status == 0 else {
-            PluginOperationLog.append(
-                "PREFLIGHT FAILED \(Self.redact(preflight.output))",
-                to: paths.pluginOperationsLog
+        if let packages = Self.parseBuildApprovalPackages(result.output) {
+            // pnpm can return 0 while explicitly reporting ignored scripts.
+            // Treat that as a failed mutation until the exact packages are
+            // approved, otherwise a half-built plugin can reach activation.
+            throw PluginCommandError.buildScriptsRequireApproval(
+                packages,
+                output: Self.redact(result.output)
             )
-            throw PluginCommandError.nonZeroExit("插件配置预检失败，当前 profile 未改变。")
+        }
+        guard result.status == 0 else {
+            throw PluginCommandError.nonZeroExit(Self.redact(result.output))
         }
 
         // pnpm can rebuild hoisted links while it changes a plugin. Reapply
@@ -182,33 +177,63 @@ final class PluginCommandRunner {
             profileWeb: stagingProfile
         )
 
-        let candidateController = HarnessProcessController()
-        do {
-            _ = try await candidateController.start(
-                installation: installation,
-                paths: paths,
-                overlayURL: FileManager.default.fileExists(atPath: paths.overlay.path) ? paths.overlay : nil,
-                dshHomeOverride: stagingHome,
-                currentDirectoryOverride: stagingSlot
-            )
-            await candidateController.stop()
-        } catch {
+        // The upgrade can replace a plugin that is loaded while DSH reads its
+        // profile. Apply the Runtime bridges before --dump-config so the
+        // configuration preflight validates the same source that will boot.
+        let preflight = try await run(
+            installation: installation,
+            arguments: ["--profile", "web", "--dump-config"],
+            environment: PluginDependencyService(
+                privateToolchainRoot: paths.toolchain
+            ).applying(
+                plan: dependencyPlan,
+                additions: [
+                    "DSH_HOME": stagingHome.path,
+                    "DSH_LAUNCHER": "DeepSeekHarness",
+                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
+                ]
+            ),
+            currentDirectory: stagingProfile,
+            logURL: paths.pluginOperationsLog
+        )
+        guard preflight.status == 0 else {
             PluginOperationLog.append(
-                "CANDIDATE START FAILED \(Self.redact(error.localizedDescription))",
+                "PREFLIGHT FAILED \(Self.redact(preflight.output))",
                 to: paths.pluginOperationsLog
             )
-            await candidateController.stop()
-            throw PluginCommandError.nonZeroExit("插件候选启动预检失败，当前 profile 未改变。")
+            throw PluginCommandError.nonZeroExit("插件配置预检失败，当前 profile 未改变。")
         }
 
-        // `dsh` may refresh the module-fallback projection during candidate
-        // boot. Rebase those links before the temporary slot is activated, so
-        // the next cleanup cannot invalidate the newly installed profile.
-        try dataSlotManager.rebaseCandidateModuleLinks(
-            candidateSlot: stagingSlot,
-            paths: paths
-        )
-        try dataSlotManager.validateCandidateModuleLinks(candidateSlot: stagingSlot)
+        if runCandidatePreflight {
+            let candidateController = HarnessProcessController()
+            do {
+                _ = try await candidateController.start(
+                    installation: installation,
+                    paths: paths,
+                    overlayURL: FileManager.default.fileExists(atPath: paths.overlay.path) ? paths.overlay : nil,
+                    dshHomeOverride: stagingHome,
+                    currentDirectoryOverride: stagingSlot
+                )
+                await candidateController.stop()
+            } catch {
+                PluginOperationLog.append(
+                    "CANDIDATE START FAILED \(Self.redact(error.localizedDescription))",
+                    to: paths.pluginOperationsLog
+                )
+                await candidateController.stop()
+                throw PluginCommandError.nonZeroExit("插件候选启动预检失败，当前 profile 未改变。")
+            }
+
+            // `dsh` may refresh the module-fallback projection during
+            // candidate boot. Rebase those links before the temporary slot is
+            // activated, so the next cleanup cannot invalidate the newly
+            // installed profile.
+            try dataSlotManager.rebaseCandidateModuleLinks(
+                candidateSlot: stagingSlot,
+                paths: paths
+            )
+            try dataSlotManager.validateCandidateModuleLinks(candidateSlot: stagingSlot)
+        }
 
         guard FileManager.default.fileExists(atPath: stagingProfile.appendingPathComponent("package.json").path) else {
             PluginOperationLog.append(
@@ -224,22 +249,29 @@ final class PluginCommandRunner {
             to: stagingHome.appendingPathComponent("launcher/plugin-metadata.json")
         )
 
-        do {
-            _ = try dataSlotManager.activate(candidateSlot: stagingSlot, paths: paths)
-        } catch {
+        if activateCandidate {
+            do {
+                _ = try dataSlotManager.activate(candidateSlot: stagingSlot, paths: paths)
+            } catch {
+                PluginOperationLog.append(
+                    "ACTIVATE FAILED \(Self.redact(error.localizedDescription))",
+                    to: paths.pluginOperationsLog
+                )
+                throw error
+            }
             PluginOperationLog.append(
-                "ACTIVATE FAILED \(Self.redact(error.localizedDescription))",
+                "ACTIVATE SUCCEEDED \(Self.redact(arguments.joined(separator: " ")))",
                 to: paths.pluginOperationsLog
             )
-            throw error
+            AppLogger.plugins.info(
+                "Plugin profile activated: \(Self.redact(arguments.joined(separator: " ")), privacy: .public)"
+            )
+        } else {
+            PluginOperationLog.append(
+                "CANDIDATE PREPARED \(Self.redact(arguments.joined(separator: " ")))",
+                to: paths.pluginOperationsLog
+            )
         }
-        PluginOperationLog.append(
-            "ACTIVATE SUCCEEDED \(Self.redact(arguments.joined(separator: " ")))",
-            to: paths.pluginOperationsLog
-        )
-        AppLogger.plugins.info(
-            "Plugin profile activated: \(Self.redact(arguments.joined(separator: " ")), privacy: .public)"
-        )
         return result
     }
 

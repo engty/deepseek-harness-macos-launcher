@@ -1087,6 +1087,133 @@ exit 1
         #expect(!plugin.canBeDisabled)
     }
 
+    @Test
+    func runtimeManagedPluginMaintenanceUpdatesOnlyActiveProfileBundles() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let profile = root.appendingPathComponent("profiles/web", isDirectory: true)
+        try fileManager.createDirectory(at: profile, withIntermediateDirectories: true)
+        let manifest = #"""
+        {
+          "dsh": { "profile": { "bundles": ["dsh-mnemon", "@anionex/dsh-vision-toolkit"] } },
+          "dependencies": {
+            "dsh-mnemon": "0.1.0",
+            "@anionex/dsh-vision-toolkit": "0.1.0",
+            "removed-plugin": "0.1.0"
+          }
+        }
+        """#
+        try Data(manifest.utf8).write(to: profile.appendingPathComponent("package.json"))
+
+        let installed = RuntimeManagedPluginMaintenance.installedPluginIDs(in: profile)
+        #expect(installed == Set(["dsh-mnemon", "@anionex/dsh-vision-toolkit"]))
+        #expect(
+            RuntimeManagedPluginMaintenance.updateArguments(installedPluginIDs: installed)
+                == ["add", "dsh-mnemon@latest", "@anionex/dsh-vision-toolkit@latest"]
+        )
+    }
+
+    @Test
+    func runtimeUpdateSkipStoreKeepsEachExactUpdateKey() {
+        let suiteName = "RuntimeUpdateSkipStoreTests.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suiteName) else {
+            Issue.record("Could not create isolated UserDefaults suite")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = RuntimeUpdateSkipStore(defaults: defaults)
+        store.skip("runtime:preview-1")
+        store.skip("official:0.1.2-alpha.2")
+
+        #expect(store.contains("runtime:preview-1"))
+        #expect(store.contains("official:0.1.2-alpha.2"))
+        #expect(!store.contains("runtime:preview-2"))
+    }
+
+    @Test
+    @MainActor
+    func projectedOverlayKeepsDisabledManagedPluginDisabledAfterPatchRowChanges() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+        try fileManager.createDirectory(at: paths.profileWeb, withIntermediateDirectories: true)
+
+        let activeManifest = #"""
+        {
+          "dsh": { "profile": { "bundles": ["dsh-mnemon", "other-plugin"] } },
+          "dependencies": { "dsh-mnemon": "0.1.0", "other-plugin": "1.0.0" }
+        }
+        """#
+        try Data(activeManifest.utf8).write(to: paths.profileWeb.appendingPathComponent("package.json"))
+        try writePlugin(
+            id: "dsh-mnemon",
+            version: "0.1.0",
+            rowID: "mnemon-old-row",
+            in: paths.profileWeb,
+            fileManager: fileManager
+        )
+        try writePlugin(
+            id: "other-plugin",
+            version: "1.0.0",
+            rowID: "other-row",
+            in: paths.profileWeb,
+            fileManager: fileManager
+        )
+
+        let manager = ProfileManager(paths: paths)
+        try manager.setEnabled(manager.refresh(), enabled: false)
+
+        let candidateProfile = root.appendingPathComponent("candidate/profiles/web", isDirectory: true)
+        try fileManager.createDirectory(at: candidateProfile, withIntermediateDirectories: true)
+        let candidateManifest = #"""
+        {
+          "dsh": { "profile": { "bundles": ["dsh-mnemon", "other-plugin"] } },
+          "dependencies": { "dsh-mnemon": "0.2.0", "other-plugin": "1.0.0" }
+        }
+        """#
+        try Data(candidateManifest.utf8).write(to: candidateProfile.appendingPathComponent("package.json"))
+        try writePlugin(
+            id: "dsh-mnemon",
+            version: "0.2.0",
+            rowID: "mnemon-new-row",
+            in: candidateProfile,
+            fileManager: fileManager
+        )
+        try writePlugin(
+            id: "other-plugin",
+            version: "1.0.0",
+            rowID: "other-row",
+            in: candidateProfile,
+            fileManager: fileManager
+        )
+
+        let projection = manager.projectOverlay(
+            forCandidateProfile: candidateProfile,
+            replacingPluginIDs: ["dsh-mnemon"]
+        )
+        #expect(projection.disabledRows == Set(["mnemon-new-row", "other-row"]))
+        #expect(!projection.disabledRows.contains("mnemon-old-row"))
+
+        let candidateOverlay = root.appendingPathComponent("candidate-overlay.yml")
+        let overlayURL = try manager.writeOverlay(projection, to: candidateOverlay)
+        #expect(overlayURL == candidateOverlay)
+        #expect(try String(contentsOf: candidateOverlay, encoding: .utf8).contains("mnemon-new-row"))
+
+        try manager.applyOverlay(projection)
+        let liveOverlay = try String(contentsOf: paths.overlay, encoding: .utf8)
+        #expect(liveOverlay.contains("mnemon-new-row"))
+        #expect(liveOverlay.contains("other-row"))
+        #expect(!liveOverlay.contains("mnemon-old-row"))
+    }
+
     private var currentArchitecture: String {
         #if arch(arm64)
         return "arm64"
@@ -1102,6 +1229,23 @@ exit 1
         try process.run()
         process.waitUntilExit()
         #expect(process.terminationStatus == 0)
+    }
+
+    private func writePlugin(
+        id: String,
+        version: String,
+        rowID: String,
+        in profile: URL,
+        fileManager: FileManager
+    ) throws {
+        let directory = profile.appendingPathComponent("node_modules/\(id)", isDirectory: true)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        let manifest = #"""
+        {"name":"\#(id)","version":"\#(version)","dsh":{"bundle":{"patch":"./cordis.bundle.yml"}}}
+        """#
+        try Data(manifest.utf8).write(to: directory.appendingPathComponent("package.json"))
+        try Data("- insert:\n    - id: \(rowID)\n      name: \(id)\n".utf8)
+            .write(to: directory.appendingPathComponent("cordis.bundle.yml"))
     }
 }
 

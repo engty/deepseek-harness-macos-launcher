@@ -20,6 +20,13 @@ enum ProfileManagerError: LocalizedError {
     }
 }
 
+/// An App-owned patch overlay projected for a candidate profile. Keeping the
+/// overlay separate from the profile slot lets a Runtime update preserve a
+/// user's plugin disable choices even when a plugin changes its patch row ID.
+struct PluginOverlayProjection: Equatable {
+    let disabledRows: Set<String>
+}
+
 @MainActor
 final class ProfileManager {
     let paths: AppPaths
@@ -34,40 +41,7 @@ final class ProfileManager {
 
     func refresh() -> [HarnessPlugin] {
         disabledRows = Self.readDisabledRows(from: paths.overlay, fileManager: fileManager)
-        guard fileManager.fileExists(atPath: paths.profileWeb.appendingPathComponent("package.json").path) else {
-            return []
-        }
-        guard let manifest = readJSON(at: paths.profileWeb.appendingPathComponent("package.json")) else {
-            AppLogger.plugins.error("Could not parse web profile package.json")
-            return []
-        }
-
-        let bundleNames = nestedStringArray(manifest, path: ["dsh", "profile", "bundles"])
-        let dependencies = (manifest["dependencies"] as? [String: Any]) ?? [:]
-        let pluginNames = bundleNames.filter { dependencies[$0] != nil }
-
-        return pluginNames.compactMap { packageName in
-            guard let packageManifest = packageManifest(named: packageName) else { return nil }
-            let packageURL = packageDirectory(named: packageName)
-            let rows: [String]
-            if let patchPath = nestedString(packageManifest, path: ["dsh", "bundle", "patch"]) {
-                let patchURL = packageURL.appendingPathComponent(patchPath).resolvingSymlinksInPath()
-                rows = Self.patchRowIDs(at: patchURL, fileManager: fileManager)
-            } else {
-                // Not every valid Harness plugin contributes a Cordis bundle
-                // patch. It still belongs in the installed-plugin list so the
-                // user can remove it through the standard `dsh plugin remove`
-                // command. Such a plugin cannot be disabled by this launcher.
-                rows = []
-            }
-            let version = packageManifest["version"] as? String ?? "unknown"
-            return HarnessPlugin(
-                id: packageName,
-                version: version,
-                bundleRowIDs: rows,
-                isDisabled: !rows.isEmpty && rows.allSatisfy(disabledRows.contains)
-            )
-        }
+        return plugins(in: paths.profileWeb, disabledRows: disabledRows)
     }
 
     func setEnabled(_ plugin: HarnessPlugin, enabled: Bool) throws {
@@ -103,8 +77,115 @@ final class ProfileManager {
         disabledRows.isEmpty ? nil : paths.overlay
     }
 
+    /// Transfers the enabled/disabled state of updated plugins from the
+    /// active profile to their candidate versions. Other plugin overlay rows
+    /// remain unchanged. The result is written only after the caller's
+    /// candidate passes its startup check.
+    func projectOverlay(
+        forCandidateProfile candidateProfile: URL,
+        replacingPluginIDs: Set<String>
+    ) -> PluginOverlayProjection {
+        let activePlugins = refresh()
+        let replacedPlugins = activePlugins.filter { replacingPluginIDs.contains($0.id) }
+        let disabledPluginIDs = Set(
+            replacedPlugins
+                .filter(\.isDisabled)
+                .map(\.id)
+        )
+        var projectedRows = disabledRows
+        projectedRows.subtract(replacedPlugins.flatMap(\.bundleRowIDs))
+
+        guard !disabledPluginIDs.isEmpty else {
+            return PluginOverlayProjection(disabledRows: projectedRows)
+        }
+
+        let candidatePlugins = plugins(in: candidateProfile, disabledRows: [])
+        for plugin in candidatePlugins where disabledPluginIDs.contains(plugin.id) {
+            projectedRows.formUnion(plugin.bundleRowIDs)
+        }
+        return PluginOverlayProjection(disabledRows: projectedRows)
+    }
+
+    /// Writes an overlay for a candidate slot and returns its URL only when
+    /// the candidate needs a patch argument at launch.
+    @discardableResult
+    func writeOverlay(
+        _ projection: PluginOverlayProjection,
+        to url: URL
+    ) throws -> URL? {
+        try writeOverlay(rows: projection.disabledRows, to: url)
+        return projection.disabledRows.isEmpty ? nil : url
+    }
+
+    /// Makes a verified candidate overlay the live App-owned overlay.
+    func applyOverlay(_ projection: PluginOverlayProjection) throws {
+        try writeOverlay(rows: projection.disabledRows, to: paths.overlay)
+        disabledRows = projection.disabledRows
+    }
+
+    /// Captures the exact prior overlay before a data-slot transaction. This
+    /// is needed only if a later live restart fails after candidate activation.
+    func overlaySnapshot() throws -> Data? {
+        guard fileManager.fileExists(atPath: paths.overlay.path) else { return nil }
+        return try Data(contentsOf: paths.overlay)
+    }
+
+    func restoreOverlay(_ data: Data?) throws {
+        if let data {
+            try fileManager.createDirectory(at: paths.state, withIntermediateDirectories: true)
+            try data.write(to: paths.overlay, options: .atomic)
+        } else if fileManager.fileExists(atPath: paths.overlay.path) {
+            try fileManager.removeItem(at: paths.overlay)
+        }
+        disabledRows = Self.readDisabledRows(from: paths.overlay, fileManager: fileManager)
+    }
+
     func packageDirectory(named packageName: String) -> URL {
-        paths.profileWeb
+        packageDirectory(named: packageName, in: paths.profileWeb)
+    }
+
+    private func plugins(
+        in profileURL: URL,
+        disabledRows: Set<String>
+    ) -> [HarnessPlugin] {
+        guard fileManager.fileExists(atPath: profileURL.appendingPathComponent("package.json").path) else {
+            return []
+        }
+        guard let manifest = readJSON(at: profileURL.appendingPathComponent("package.json")) else {
+            AppLogger.plugins.error("Could not parse web profile package.json")
+            return []
+        }
+
+        let bundleNames = nestedStringArray(manifest, path: ["dsh", "profile", "bundles"])
+        let dependencies = (manifest["dependencies"] as? [String: Any]) ?? [:]
+        let pluginNames = bundleNames.filter { dependencies[$0] != nil }
+
+        return pluginNames.compactMap { packageName in
+            guard let packageManifest = packageManifest(named: packageName, in: profileURL) else { return nil }
+            let packageURL = packageDirectory(named: packageName, in: profileURL)
+            let rows: [String]
+            if let patchPath = nestedString(packageManifest, path: ["dsh", "bundle", "patch"]) {
+                let patchURL = packageURL.appendingPathComponent(patchPath).resolvingSymlinksInPath()
+                rows = Self.patchRowIDs(at: patchURL, fileManager: fileManager)
+            } else {
+                // Not every valid Harness plugin contributes a Cordis bundle
+                // patch. It still belongs in the installed-plugin list so the
+                // user can remove it through the standard `dsh plugin remove`
+                // command. Such a plugin cannot be disabled by this launcher.
+                rows = []
+            }
+            let version = packageManifest["version"] as? String ?? "unknown"
+            return HarnessPlugin(
+                id: packageName,
+                version: version,
+                bundleRowIDs: rows,
+                isDisabled: !rows.isEmpty && rows.allSatisfy(disabledRows.contains)
+            )
+        }
+    }
+
+    private func packageDirectory(named packageName: String, in profileURL: URL) -> URL {
+        profileURL
             .appendingPathComponent("node_modules", isDirectory: true)
             .appendingPathComponent(packageName, isDirectory: true)
             .resolvingSymlinksInPath()
@@ -115,23 +196,27 @@ final class ProfileManager {
     }
 
     private func writeOverlay() throws {
-        if disabledRows.isEmpty {
-            if fileManager.fileExists(atPath: paths.overlay.path) {
-                try fileManager.removeItem(at: paths.overlay)
+        try writeOverlay(rows: disabledRows, to: paths.overlay)
+    }
+
+    private func writeOverlay(rows: Set<String>, to url: URL) throws {
+        if rows.isEmpty {
+            if fileManager.fileExists(atPath: url.path) {
+                try fileManager.removeItem(at: url)
             }
             return
         }
 
         var content = "# Generated by DeepSeek Harness. Do not edit.\n"
-        for rowID in disabledRows.sorted() {
+        for rowID in rows.sorted() {
             content += "- id: \(rowID)\n  disabled: true\n"
         }
-        try fileManager.createDirectory(at: paths.state, withIntermediateDirectories: true)
-        try content.write(to: paths.overlay, atomically: true, encoding: .utf8)
+        try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try content.write(to: url, atomically: true, encoding: .utf8)
     }
 
-    private func packageManifest(named packageName: String) -> [String: Any]? {
-        readJSON(at: packageDirectory(named: packageName).appendingPathComponent("package.json"))
+    private func packageManifest(named packageName: String, in profileURL: URL) -> [String: Any]? {
+        readJSON(at: packageDirectory(named: packageName, in: profileURL).appendingPathComponent("package.json"))
     }
 
     private func readJSON(at url: URL) -> [String: Any]? {

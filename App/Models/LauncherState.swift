@@ -69,10 +69,11 @@ enum RuntimeUpdateStage: Int, Equatable {
     case packaging = 5
     case waitingForConfirmation = 6
     case activating = 7
-    case testing = 8
-    case completed = 9
+    case updatingManagedPlugins = 8
+    case testing = 9
+    case completed = 10
 
-    static let totalSteps = 9
+    static let totalSteps = 10
 
     var message: String {
         switch self {
@@ -92,6 +93,8 @@ enum RuntimeUpdateStage: Int, Equatable {
             return "正在停止旧 Runtime 并安装新版本…"
         case .testing:
             return "正在用当前插件配置进行启动检查…"
+        case .updatingManagedPlugins:
+            return "正在同步更新记忆和视觉插件…"
         case .completed:
             return "Harness Runtime 升级完成"
         }
