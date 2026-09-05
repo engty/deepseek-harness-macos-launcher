@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ROOT="${1:-${HARNESS_RUNTIME_SOURCE:-}}"
 NODE_PATH="${HARNESS_NODE_PATH:-$(command -v node || true)}"
 DESTINATION="$ROOT_DIR/Resources/runtime"
-DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6}"
+DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6 @anionex/dsh-vision-toolkit@0.1.40}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2

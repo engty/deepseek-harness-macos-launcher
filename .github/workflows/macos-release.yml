@@ -15,6 +15,7 @@ permissions:
 env:
   NODE_VERSION: '22.19.0'
   PNPM_VERSION: '10.19.0'
+  NPM_VERSION: '10.9.3'
   # Pin the Runtime used by this release to the latest verified official npm
   # prerelease. The App can still discover newer prereleases at runtime.
   HARNESS_VERSION: '0.1.2-alpha.5'
@@ -35,8 +36,14 @@ jobs:
     steps:
       - name: Check out source
         uses: actions/checkout@v4
+      - name: Set up Node.js for adapter tests
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - name: Run Swift test suite
         run: swift test
+      - name: Run dsh1024 adapter test
+        run: node --test Tests/dsh1024-adapter.test.mjs
 
   build-macos:
     name: Build macOS arm64 App
@@ -74,7 +81,7 @@ jobs:
           # into the same prefix makes pnpm move its own package aside during
           # reification, which aborts the install on the hosted runner.
           npm install --prefix "$pnpm_bootstrap" --ignore-scripts --no-audit --no-fund \
-            "pnpm@${PNPM_VERSION}"
+            "pnpm@${PNPM_VERSION}" "npm@${NPM_VERSION}"
           "$pnpm_bootstrap/node_modules/.bin/pnpm" \
             --dir "$runtime_source" \
             add \
@@ -83,6 +90,7 @@ jobs:
             "@deepseek-ai/dsh@${HARNESS_VERSION}"
           mkdir -p "$runtime_source/node_modules/.bin"
           ditto "$pnpm_bootstrap/node_modules/pnpm" "$runtime_source/node_modules/pnpm"
+          ditto "$pnpm_bootstrap/node_modules/npm" "$runtime_source/node_modules/npm"
           ln -sf ../pnpm/bin/pnpm.cjs "$runtime_source/node_modules/.bin/pnpm"
           chmod +x "$runtime_source/node_modules/pnpm/bin/pnpm.cjs"
           HARNESS_MNEMON_VERSION="${MNEMON_VERSION}" \

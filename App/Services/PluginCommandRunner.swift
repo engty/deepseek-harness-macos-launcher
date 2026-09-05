@@ -38,6 +38,11 @@ final class PluginCommandRunner {
     /// The command currently executing (the operation gate serializes all
     /// plugin mutations, so there is at most one).
     private var activeProcess: Process?
+    private let baseEnvironment: [String: String]
+
+    init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+        baseEnvironment = environment
+    }
 
     /// Terminates the currently running plugin command and its child tree.
     /// Used when the app quits so pnpm/plugin build children do not survive
@@ -57,6 +62,7 @@ final class PluginCommandRunner {
         additionalRequirements: [ToolchainRequirement] = []
     ) throws -> PluginDependencyPlan {
         try PluginDependencyService(
+            environment: baseEnvironment,
             privateToolchainRoot: paths.toolchain
         ).resolve(
             installation: installation,
@@ -114,20 +120,29 @@ final class PluginCommandRunner {
             )
         }
 
+        var environment = try PluginExecutionEnvironment.make(
+            installation: installation, paths: paths, dshHome: stagingHome,
+            searchPath: dependencyPlan.searchPath, base: baseEnvironment
+        )
+        environment["CI"] = "true"
+        if PluginExecutionEnvironment.requiresStoreMigration(
+            profile: stagingProfile, store: paths.caches.appendingPathComponent("pnpm/store")
+        ) {
+            // A copied App profile still names the build machine's store.
+            // Re-link only the disposable candidate with the private store.
+            let migration = try await run(installation: installation,
+                arguments: ["plugin", "--profile", "web", "install", "--force", "--ignore-scripts"],
+                environment: environment, currentDirectory: stagingProfile, logURL: paths.pluginOperationsLog)
+            guard migration.status == 0 else {
+                throw PluginCommandError.nonZeroExit("迁移插件缓存失败：\n" + Self.redact(migration.output))
+            }
+        }
+
         let result: PluginCommandResult
         result = try await run(
             installation: installation,
             arguments: ["plugin", "--profile", "web"] + arguments,
-            environment: PluginDependencyService(
-                privateToolchainRoot: paths.toolchain
-            ).applying(
-                plan: dependencyPlan,
-                additions: [
-                    "DSH_HOME": stagingHome.path,
-                    "DSH_LAUNCHER": "DeepSeekHarness",
-                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
-                ]
-            ),
+            environment: environment,
             currentDirectory: stagingProfile,
             logURL: paths.pluginOperationsLog
         )
@@ -145,11 +160,16 @@ final class PluginCommandRunner {
             throw PluginCommandError.nonZeroExit(Self.redact(result.output))
         }
 
+        try Dsh1024Adapter.sync(profile: stagingProfile)
+
         // pnpm can rebuild hoisted links while it changes a plugin. Reapply
         // every App-owned Runtime bridge to the candidate before its first
         // boot, so an otherwise valid plugin update cannot revive an old core
         // module or adapter and then fail the candidate preflight.
         let compatibilityInstaller = DefaultProfileInstaller()
+        _ = try compatibilityInstaller.syncBetterDshPetAdapter(
+            profileWeb: stagingProfile, runtimeRoot: installation.root
+        )
         _ = try compatibilityInstaller.syncRuntimeCoreModuleCompatibility(
             profileWeb: stagingProfile,
             runtimeRoot: installation.root,
@@ -183,16 +203,7 @@ final class PluginCommandRunner {
         let preflight = try await run(
             installation: installation,
             arguments: ["--profile", "web", "--dump-config"],
-            environment: PluginDependencyService(
-                privateToolchainRoot: paths.toolchain
-            ).applying(
-                plan: dependencyPlan,
-                additions: [
-                    "DSH_HOME": stagingHome.path,
-                    "DSH_LAUNCHER": "DeepSeekHarness",
-                    "MNEMON_DATA_DIR": stagingHome.appendingPathComponent("mnemon", isDirectory: true).path
-                ]
-            ),
+            environment: environment,
             currentDirectory: stagingProfile,
             logURL: paths.pluginOperationsLog
         )
@@ -205,7 +216,9 @@ final class PluginCommandRunner {
         }
 
         if runCandidatePreflight {
-            let candidateController = HarnessProcessController()
+            let candidateController = HarnessProcessController(
+                readinessTimeout: HarnessProcessController.defaultReadinessTimeout, environment: baseEnvironment
+            )
             do {
                 _ = try await candidateController.start(
                     installation: installation,
@@ -291,9 +304,7 @@ final class PluginCommandRunner {
         process.currentDirectoryURL = currentDirectory
         process.standardOutput = outputPipe
         process.standardError = outputPipe
-        var environment = ProcessInfo.processInfo.environment
-        environment.merge(additions) { _, new in new }
-        process.environment = environment
+        process.environment = additions
 
         outputPipe.fileHandleForReading.readabilityHandler = { handle in
             let data = handle.availableData

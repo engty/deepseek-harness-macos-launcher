@@ -125,6 +125,22 @@ final class OfficialHarnessRuntimeBuilder {
             throw OfficialHarnessRuntimeBuilderError.installFailed(install.output)
         }
         try embedPackageManager(layout.packageManagerPackage, in: stagedRuntime)
+        // Keep npm/npx available after a Runtime upgrade as well as on a
+        // fresh App install. Never copy the previous Runtime's core modules.
+        let npmSource = [
+            currentInstallation.root.appendingPathComponent("node_modules/npm"),
+            Bundle.main.resourceURL?.appendingPathComponent("runtime/node_modules/npm"),
+            Dsh1024Adapter.resourceDirectory.deletingLastPathComponent()
+                .appendingPathComponent("runtime/node_modules/npm")
+        ].compactMap { $0 }.first {
+            fileManager.fileExists(atPath: $0.appendingPathComponent("package.json").path)
+        }
+        if let npmSource {
+            let npmDestination = stagedRuntime.appendingPathComponent("node_modules/npm")
+            if !fileManager.fileExists(atPath: npmDestination.path) {
+                try fileManager.copyItem(at: npmSource, to: npmDestination)
+            }
+        }
 
         // The official package update may replace the fork provider. Reapply
         // the review-only text filter before archiving so fixed-model Mnemon

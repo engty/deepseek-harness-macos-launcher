@@ -6,6 +6,7 @@ import WebKit
 struct HarnessWebView: NSViewRepresentable {
     let url: URL
     let onLoadError: (String) -> Void
+    var onStoreRequest: (([String]) async -> [String: Any])? = nil
 
     // dsh1024 provides its store as a remote iframe inside the local Harness
     // page. Keep the main document locked to the local runtime, but allow the
@@ -14,12 +15,15 @@ struct HarnessWebView: NSViewRepresentable {
     private static let embeddedPluginOriginHosts = ["deepseek1024.com"]
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(allowedOrigin: url, onLoadError: onLoadError)
+        Coordinator(allowedOrigin: url, onLoadError: onLoadError, onStoreRequest: onStoreRequest)
     }
 
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
         configuration.websiteDataStore = .default()
+        configuration.userContentController.addScriptMessageHandler(
+            context.coordinator, contentWorld: .page, name: "launcherPluginStore"
+        )
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.uiDelegate = context.coordinator
@@ -31,6 +35,7 @@ struct HarnessWebView: NSViewRepresentable {
     func updateNSView(_ webView: WKWebView, context: Context) {
         context.coordinator.allowedOrigin = url
         context.coordinator.onLoadError = onLoadError
+        context.coordinator.onStoreRequest = onStoreRequest
         // SwiftUI calls updateNSView whenever any observed launcher state
         // changes, including the once-per-minute balance value. The WebView
         // may currently be on Harness's Settings/Models route, so comparing
@@ -54,6 +59,25 @@ struct HarnessWebView: NSViewRepresentable {
         return embeddedPluginOriginHosts.contains(host)
     }
 
+    static func allowsStoreMessage(
+        isMainFrame: Bool,
+        origin: URL,
+        allowedOrigin: URL,
+        mainFrameURL: URL? = nil
+    ) -> Bool {
+        if isMainFrame {
+            return ["127.0.0.1", "localhost", "::1"].contains(origin.host ?? "")
+                && sharesOrigin(origin, allowedOrigin)
+        }
+        // The 1024 Store is rendered in a remote iframe inside the local
+        // Harness document. The iframe may request a native install only when
+        // its exact HTTPS origin is embedded by our local Runtime page.
+        guard isAllowedEmbeddedPluginOrigin(origin),
+              let mainFrameURL,
+              sharesOrigin(mainFrameURL, allowedOrigin) else { return false }
+        return true
+    }
+
     private static func effectivePort(for url: URL) -> Int? {
         if let port = url.port { return port }
         switch url.scheme?.lowercased() {
@@ -64,13 +88,40 @@ struct HarnessWebView: NSViewRepresentable {
     }
 
     @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
         var allowedOrigin: URL
         var onLoadError: (String) -> Void
+        var onStoreRequest: (([String]) async -> [String: Any])?
 
-        init(allowedOrigin: URL, onLoadError: @escaping (String) -> Void) {
+        init(allowedOrigin: URL, onLoadError: @escaping (String) -> Void,
+             onStoreRequest: (([String]) async -> [String: Any])? = nil) {
             self.allowedOrigin = allowedOrigin
             self.onLoadError = onLoadError
+            self.onStoreRequest = onStoreRequest
+        }
+
+        func userContentController(
+            _ userContentController: WKUserContentController,
+            didReceive message: WKScriptMessage,
+            replyHandler: @escaping (Any?, String?) -> Void
+        ) {
+            let securityOrigin = message.frameInfo.securityOrigin
+            var origin = URLComponents()
+            origin.scheme = securityOrigin.protocol
+            origin.host = securityOrigin.host
+            origin.port = securityOrigin.port
+            guard message.name == "launcherPluginStore", let originURL = origin.url,
+                  HarnessWebView.allowsStoreMessage(isMainFrame: message.frameInfo.isMainFrame,
+                      origin: originURL, allowedOrigin: allowedOrigin, mainFrameURL: message.webView?.url),
+                  let body = message.body as? [String: Any],
+                  let arguments = body["arguments"] as? [String],
+                  let onStoreRequest else {
+                replyHandler(nil, "此页面不能调用启动器插件安装功能。")
+                return
+            }
+            Task { @MainActor in
+                replyHandler(await onStoreRequest(arguments), nil)
+            }
         }
 
         func webView(

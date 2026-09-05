@@ -296,9 +296,14 @@ struct DefaultProfileInstaller {
     /// continue using Windows-only code and ignore new persistence fixes.
     @discardableResult
     func syncBetterDshPetAdapter(paths: AppPaths, runtimeRoot: URL) throws -> Bool {
+        try syncBetterDshPetAdapter(profileWeb: paths.profileWeb, runtimeRoot: runtimeRoot)
+    }
+
+    @discardableResult
+    func syncBetterDshPetAdapter(profileWeb: URL, runtimeRoot: URL) throws -> Bool {
         let bundledPackage = runtimeRoot
             .appendingPathComponent("default-profile/profiles/web/node_modules/better-dsh-pet", isDirectory: true)
-        let activePackage = paths.profileWeb
+        let activePackage = profileWeb
             .appendingPathComponent("node_modules/better-dsh-pet", isDirectory: true)
         let bundledManifest = bundledPackage.appendingPathComponent("package.json")
         let activeManifest = activePackage.appendingPathComponent("package.json")
@@ -313,14 +318,17 @@ struct DefaultProfileInstaller {
             return false
         }
 
+        var changed = false
         for relativePath in Self.betterDshPetAdapterFiles {
             let source = bundledPackage.appendingPathComponent(relativePath)
             let destination = activePackage.appendingPathComponent(relativePath)
             guard fileManager.fileExists(atPath: source.path) else { return false }
+            if (try? Data(contentsOf: source)) == (try? Data(contentsOf: destination)) { continue }
             try replaceItemAtomically(source: source, destination: destination)
+            changed = true
         }
         AppLogger.plugins.info("Refreshed the bundled macOS better-dsh-pet adapter.")
-        return true
+        return changed
     }
 
     /// Bridges the dsh-mnemon projection descriptor between the two Runtime
@@ -654,7 +662,7 @@ struct DefaultProfileInstaller {
         let parent = destination.deletingLastPathComponent()
         try fileManager.createDirectory(at: parent, withIntermediateDirectories: true)
         let temporary = parent.appendingPathComponent(
-            ".(destination.lastPathComponent).(UUID().uuidString).tmp"
+            ".\(destination.lastPathComponent).\(UUID().uuidString).tmp"
         )
         defer { try? fileManager.removeItem(at: temporary) }
         try fileManager.copyItem(at: source, to: temporary)

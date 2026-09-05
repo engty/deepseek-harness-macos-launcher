@@ -26,6 +26,23 @@ Its license, terms, provider protocol, and ChatGPT subscription behavior are
 controlled by that upstream project and must be reviewed there before
 redistribution. Installing it is an explicit user action.
 
+## dsh1024
+
+The fresh-install profile pins `dsh1024@0.5.0` (MIT). Reviewed replacements
+under `Resources/dsh1024-launcher` disable self-updates and hand installation
+to the launcher's native profile transaction. The original license is included.
+
+- Repository: <https://github.com/imsai-sh/awesome-deepseek-harness-plugins/tree/main/packages/dsh1024>
+- Adapter scope: `Resources/dsh1024-launcher/NOTICE.md`
+
+## dsh-vision-toolkit
+
+The fresh-install profile includes `@anionex/dsh-vision-toolkit@0.1.40`.
+Its upstream package license and bundled notices remain in the Runtime.
+Image services and any external model accounts remain configured by the user.
+
+- Package: <https://www.npmjs.com/package/@anionex/dsh-vision-toolkit>
+
 ## better-dsh-pet
 
 The fresh-install Runtime profile includes the upstream `better-dsh-pet@0.3.5`
@@ -40,9 +57,9 @@ the upstream package README and license.
 
 ## dsh-mnemon and Mnemon Native
 
-The fresh-install Runtime profile includes `dsh-mnemon@0.3.5`, installed
+The fresh-install Runtime profile includes `dsh-mnemon@0.4.6`, installed
 through the standard Harness plugin registry. The Runtime Bundle also carries
-the architecture-specific `mnemon` Native CLI `0.2.5`; the release workflow
+the architecture-specific `mnemon` Native CLI `0.2.7`; the release workflow
 downloads the official archive and verifies its upstream SHA-256 checksum
 before placing it under the App Runtime. The launcher does not install this
 binary globally.
@@ -50,14 +67,14 @@ binary globally.
 - dsh-mnemon repository: <https://github.com/omdsh-dev/dsh-mnemon>
 - dsh-mnemon license: MIT
 - Mnemon Native repository: <https://github.com/mnemon-dev/mnemon>
-- Mnemon Native release: <https://github.com/mnemon-dev/mnemon/releases/tag/v0.2.5>
+- Mnemon Native release: <https://github.com/mnemon-dev/mnemon/releases/tag/v0.2.7>
 - Mnemon Native license: MIT
 
 ## Other dependencies
 
-Node.js, Swift, SwiftUI, AppKit, WebKit, pnpm, and transitive npm packages are
+Node.js, Swift, SwiftUI, AppKit, WebKit, npm, pnpm, and transitive npm packages are
 used by the build or Runtime Bundle. The release workflow pins pnpm
-(10.19.0) inside the App Runtime; it is not installed globally. Their respective licenses remain with
+(10.19.0) and npm (10.9.3) inside the App Runtime; they are not installed globally. Their respective licenses remain with
 their authors. A release artifact built with the workflow includes the
 Runtime dependency tree; inspect the corresponding upstream package metadata
 before redistributing a modified artifact.

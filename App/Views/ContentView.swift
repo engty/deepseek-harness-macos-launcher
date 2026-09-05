@@ -9,9 +9,11 @@ struct ContentView: View {
         ZStack {
             Group {
                 if let endpoint = model.endpointURL {
-                    HarnessWebView(url: endpoint) { error in
+                    HarnessWebView(url: endpoint, onLoadError: { error in
                         model.webViewDidFail(error)
-                    }
+                    }, onStoreRequest: { arguments in
+                        await model.handlePluginStoreRequest(arguments)
+                    })
                 } else {
                     StartupView(model: model)
                 }

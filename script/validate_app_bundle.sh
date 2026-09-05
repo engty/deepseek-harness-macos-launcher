@@ -22,6 +22,7 @@ fail() {
 [[ -f "$INFO_PLIST" ]] || fail "missing Info.plist"
 [[ -f "$APP_RESOURCES/AppIcon.icns" ]] || fail "missing AppIcon.icns"
 [[ -x "$PLUGIN_HELPER" ]] || fail "missing plugin helper CLI"
+[[ -f "$APP_RESOURCES/dsh1024-launcher/lib/routes.js" ]] || fail "missing 1024 Store adapter"
 
 bundle_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$INFO_PLIST" 2>/dev/null || true)"
 [[ "$bundle_name" == "DeepSeek Harness" ]] || fail "CFBundleDisplayName must be DeepSeek Harness"
@@ -47,6 +48,9 @@ if [[ "$REQUIRE_BUNDLED_RUNTIME" == "1" || -d "$RUNTIME_ROOT" ]]; then
       fail "bundled Node is too old: $node_version (requires at least v22.19.0)"
     fi
     echo "Bundled Node probe passed: $node_version"
+    [[ -f "$RUNTIME_ROOT/node_modules/npm/bin/npm-cli.js" ]] || fail "bundled npm/npx is missing"
+    "$RUNTIME_ROOT/node/bin/node" "$RUNTIME_ROOT/node_modules/npm/bin/npm-cli.js" --version >/dev/null \
+      || fail "bundled npm does not run"
     probe_home="$(mktemp -d)"
     trap 'rm -rf "$probe_home"' EXIT
     PATH="$RUNTIME_ROOT/node/bin:$PATH" DSH_HOME="$probe_home" \

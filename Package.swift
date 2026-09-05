@@ -21,7 +21,8 @@ let package = Package(
         .testTarget(
             name: "HarnessLauncherTests",
             dependencies: ["HarnessLauncher"],
-            path: "Tests"
+            path: "Tests",
+            exclude: ["dsh1024-adapter.test.mjs"]
         )
     ]
 )

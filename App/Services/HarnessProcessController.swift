@@ -40,6 +40,7 @@ final class HarnessProcessController {
     static let defaultReadinessTimeout: TimeInterval = 12 * 60
 
     private let readinessTimeout: TimeInterval
+    private let baseEnvironment: [String: String]
     private(set) var process: Process?
     var onUnexpectedTermination: (@MainActor (String) -> Void)?
     private var outputPipe: Pipe?
@@ -54,10 +55,12 @@ final class HarnessProcessController {
 
     init() {
         readinessTimeout = Self.defaultReadinessTimeout
+        baseEnvironment = ProcessInfo.processInfo.environment
     }
 
-    init(readinessTimeout: TimeInterval) {
+    init(readinessTimeout: TimeInterval, environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.readinessTimeout = max(1, readinessTimeout)
+        baseEnvironment = environment
     }
 
     var isRunning: Bool { process?.isRunning == true }
@@ -81,19 +84,11 @@ final class HarnessProcessController {
         process.standardOutput = outputPipe
         process.standardError = errorPipe
 
-        var environment = ProcessInfo.processInfo.environment
         let harnessHome = dshHomeOverride ?? paths.dshHome
-        environment["DSH_HOME"] = harnessHome.path
-        environment["DSH_LAUNCHER"] = "DeepSeekHarness"
-        // dsh-mnemon defaults to ~/.mnemon outside a configured scope. Force
-        // its local memory store inside the App-owned DSH_HOME so launcher
-        // installs remain self-contained and never inherit a user's global
-        // Mnemon data directory.
-        environment["MNEMON_DATA_DIR"] = harnessHome.appendingPathComponent("mnemon", isDirectory: true).path
-        environment["PATH"] = PluginDependencyService(
-            environment: environment,
-            privateToolchainRoot: paths.toolchain
-        ).runtimeSearchPath(installation: installation)
+        try Dsh1024Adapter.sync(profile: harnessHome.appendingPathComponent("profiles/web"))
+        let environment = try PluginExecutionEnvironment.make(
+            installation: installation, paths: paths, dshHome: harnessHome, base: baseEnvironment
+        )
 
         // Use the explicit profile form because the current web alias rejects
         // parent launcher flags such as --patch. Newer Harness runtimes expose

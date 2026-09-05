@@ -351,6 +351,40 @@ final class LauncherModel: ObservableObject {
         }
     }
 
+    func handlePluginStoreRequest(_ input: [String]) async -> [String: Any] {
+        guard beginExclusiveOperation(notifyBusy: false) else {
+            return ["ok": false, "error": "已有插件或系统更新正在进行，请稍后重试。"]
+        }
+        defer { endExclusiveOperation() }
+        do {
+            let request = try PluginStoreRequest(arguments: input)
+            let installed = profileManager.refresh()
+            let removed = request.isRemoval ? installed.filter { request.arguments.dropFirst().contains($0.id) } : []
+            if request.isRemoval, removed.count != request.arguments.count - 1 {
+                return ["ok": false, "error": "选择的插件未安装在当前启动器中。"]
+            }
+            let installation = try locator.locate()
+            let plan = try pluginRunner.dependencyPlan(installation: installation, paths: paths, arguments: request.arguments)
+            let operation = request.isRemoval ? "卸载" : "安装"
+            guard confirmPluginMutation(operation: operation,
+                spec: request.arguments.dropFirst().joined(separator: " "), dependencyPlan: plan) else {
+                return ["ok": false, "error": "已取消安装操作。"]
+            }
+            if !request.allowedBuildScripts.isEmpty,
+               !confirmBuildScriptApproval(packages: request.allowedBuildScripts) {
+                return ["ok": false, "error": "未允许执行依赖构建脚本，操作已取消。"]
+            }
+            await mutatePlugin(arguments: request.arguments, operation: "正在\(operation)插件",
+                userOperation: operation, dependencyPlan: plan,
+                allowedBuildScripts: request.allowedBuildScripts,
+                cleanupPluginsAfterRemoval: removed, holdsExclusiveLock: true)
+            if let lastError { return ["ok": false, "error": lastError] }
+            return ["ok": true, "exitCode": 0, "stdout": "插件已通过启动器安装和启动检查。"]
+        } catch {
+            return ["ok": false, "error": error.localizedDescription]
+        }
+    }
+
     func removePluginPrompt() {
         let selected = promptForPluginSelection(title: "卸载 Harness 插件", operation: "卸载")
         guard !selected.isEmpty else { return }
