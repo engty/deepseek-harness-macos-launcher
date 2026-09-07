@@ -13,7 +13,7 @@ Resources/runtime/
   bin/
     mnemon              # pinned Mnemon Native CLI for dsh-mnemon
   default-profile/
-    profiles/web/       # fresh-install profile: dsh1024 + better-dsh-pet + dsh-mnemon
+    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + Vision + GenUI
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -39,7 +39,10 @@ machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
-(`0.5.0`), `better-dsh-pet` (`0.3.5`) and `dsh-mnemon` (`0.3.5`).
+(`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`),
+`@anionex/dsh-vision-toolkit` (`0.1.40`) and
+`@changfenhuang/dsh-genui` (`0.9.8`). GenUI teaches the model the `dsh-ui`
+fence and renders safe interactive cards, charts and forms inside replies.
 The bundle carries a checksum-verified, architecture-matched Mnemon Native
 CLI (`0.2.5`) under `runtime/bin`; it is visible only to Harness child
 processes and is not installed into the user's global PATH. The pet is disabled by default and

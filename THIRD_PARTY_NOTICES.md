@@ -43,6 +43,16 @@ Image services and any external model accounts remain configured by the user.
 
 - Package: <https://www.npmjs.com/package/@anionex/dsh-vision-toolkit>
 
+## dsh-genui
+
+The fresh-install profile includes `@changfenhuang/dsh-genui@0.9.8`. It adds
+the `dsh-ui` output language and the browser renderer for interactive UI
+components. The package is MIT-licensed and remains under its upstream
+project's terms.
+
+- Repository: <https://github.com/omdsh-dev/dsh-genui>
+- Package: <https://www.npmjs.com/package/@changfenhuang/dsh-genui>
+
 ## better-dsh-pet
 
 The fresh-install Runtime profile includes the upstream `better-dsh-pet@0.3.5`

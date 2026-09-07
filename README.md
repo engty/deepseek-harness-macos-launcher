@@ -22,6 +22,7 @@
 - **双击即用**：Node.js、pnpm 与 Harness Runtime 由 App 管理，不必手动配置终端环境。
 - **原生桌面体验**：官方 Web UI 运行在本机，并放进 macOS 原生窗口；菜单栏可管理密钥、插件和 Runtime。
 - **插件生态保持兼容**：继续使用官方插件命令，支持插件安装、停用、卸载和缓存清理。
+- **GenUI 开箱可用**：内置 `@changfenhuang/dsh-genui`，让模型在回复中生成安全的交互卡片、图表和表单。
 - **本机优先**：运行时与用户数据保存在 App 的私有目录，减少对系统全局环境的影响。
 - **1024 Store 深度适配**：商店页面保留在 App 内，安装和卸载交给启动器统一确认、检测和回滚；商店自身不会偷偷更新核心组件。
 - **升级更稳**：Runtime 和插件变更先在候选目录完成，再通过真实启动检查后切换，失败时保留原来的可用环境。
@@ -51,6 +52,7 @@
 - **macOS 启动器**：本仓库中的 Swift、SwiftUI、AppKit 和 WebKit 代码，遵循本项目的 MIT 许可证。
 - **1024 Store**：基于 [awesome-deepseek-harness-plugins](https://github.com/imsai-sh/awesome-deepseek-harness-plugins/tree/main/packages/dsh1024)，启动器内置的适配文件只负责 macOS 环境隔离、安装事务和自更新控制。
 - **桌宠适配**：基于 [better-dsh-pet](https://github.com/ysppwn721/better-dsh-pet) 及其公开 macOS 适配工作。
+- **GenUI**：基于 [dsh-genui](https://github.com/omdsh-dev/dsh-genui)，以官方插件机制提供 `dsh-ui` 渲染能力。
 - **记忆与其他插件**：通过 Harness 官方插件机制接入，来源、许可证和服务条款由各自上游项目负责。
 
 所有第三方组件与来源记录见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
