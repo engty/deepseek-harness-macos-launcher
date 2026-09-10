@@ -63,6 +63,9 @@ chmod +x "$APP_BINARY"
 if [[ -d "$ROOT_DIR/Resources/runtime" ]]; then
   cp -R "$ROOT_DIR/Resources/runtime" "$APP_RESOURCES/runtime"
 fi
+if [[ -d "$ROOT_DIR/Resources/session-repair" ]]; then
+  cp -R "$ROOT_DIR/Resources/session-repair" "$APP_RESOURCES/session-repair"
+fi
 cp -R "$ROOT_DIR/Resources/dsh1024-launcher" "$APP_RESOURCES/dsh1024-launcher"
 if [[ -x "$PLUGIN_HELPER_SOURCE" ]]; then
   mkdir -p "$(dirname "$PLUGIN_HELPER_DESTINATION")"

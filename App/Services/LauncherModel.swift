@@ -36,6 +36,7 @@ final class LauncherModel: ObservableObject {
     private let dataSlotManager: DataSlotManager
     private let runtimePreflight: RuntimePreflightService
     private let defaultProfileInstaller: DefaultProfileInstaller
+    private let legacySessionRepairService: LegacySessionRepairService
     private let balanceService: DeepSeekBalanceService
     private let deepSeekCredentialStore = DeepSeekCredentialStore()
     private let deepSeekRechargeURL = URL(string: "https://platform.deepseek.com/usage")!
@@ -78,6 +79,7 @@ final class LauncherModel: ObservableObject {
         dataSlotManager = DataSlotManager()
         runtimePreflight = RuntimePreflightService()
         defaultProfileInstaller = DefaultProfileInstaller()
+        legacySessionRepairService = LegacySessionRepairService()
         balanceService = DeepSeekBalanceService()
         processController.onUnexpectedTermination = { [weak self] output in
             self?.handleUnexpectedTermination(output)
@@ -205,6 +207,11 @@ final class LauncherModel: ObservableObject {
                     "Could not apply fixed-model Mnemon image filtering: \(error.localizedDescription, privacy: .public)"
                 )
             }
+            _ = await legacySessionRepairService.repairLegacySessions(
+                dshHome: paths.dshHome,
+                installation: installation,
+                backupRoot: paths.backups
+            )
             let url = try await processController.start(
                 installation: installation,
                 paths: paths,
@@ -1319,6 +1326,11 @@ final class LauncherModel: ObservableObject {
             _ = try defaultProfileInstaller.syncDshMnemonTextOnlyReviewCompatibility(
                 profileWeb: candidateProfile,
                 runtimeRoot: newActivation.installation.root
+            )
+            _ = await legacySessionRepairService.repairLegacySessions(
+                dshHome: candidateSlot.appendingPathComponent("dsh-home", isDirectory: true),
+                installation: newActivation.installation,
+                backupRoot: paths.backups
             )
             runtimeUpdateStage = .testing
             let candidateController = HarnessProcessController()
