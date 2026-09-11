@@ -40,6 +40,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+      - name: Prepare dsh1024 adapter fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture_root="$RUNNER_TEMP/dsh1024-fixture"
+          mkdir -p "$fixture_root" Resources/runtime/default-profile/profiles/web/node_modules
+          npm pack --ignore-scripts --silent --pack-destination "$fixture_root" dsh1024@0.5.0
+          archive="$fixture_root/$(find "$fixture_root" -maxdepth 1 -type f -name 'dsh1024-*.tgz' -print -quit | xargs -n1 basename)"
+          test -f "$archive"
+          tar -xzf "$archive" -C "$fixture_root"
+          mv "$fixture_root/package" Resources/runtime/default-profile/profiles/web/node_modules/dsh1024
       - name: Run Swift test suite
         run: swift test
       - name: Run dsh1024 adapter test
