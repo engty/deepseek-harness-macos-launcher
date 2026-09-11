@@ -626,43 +626,6 @@ struct RuntimeManifestTests {
     }
 
     @Test
-    func adaptsVisionToolkitSessionHistoryForModernRuntime() throws {
-        let fileManager = FileManager.default
-        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        defer { try? fileManager.removeItem(at: root) }
-        let paths = AppPaths(
-            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
-            caches: root.appendingPathComponent("caches", isDirectory: true),
-            logs: root.appendingPathComponent("logs", isDirectory: true)
-        )
-        try paths.prepare()
-
-        let packageDirectory = paths.profileWeb.appendingPathComponent(
-            "node_modules/@anionex/dsh-vision-toolkit",
-            isDirectory: true
-        )
-        let sourceURL = packageDirectory.appendingPathComponent("lib/exposure.js")
-        try fileManager.createDirectory(at: sourceURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try Data(#"{"name":"@anionex/dsh-vision-toolkit","version":"0.1.39"}"#.utf8)
-            .write(to: packageDirectory.appendingPathComponent("package.json"))
-        let source = [
-            "function hasLoadedVisionSkill(session) {",
-            "    for (const event of session.events) {",
-            "        consume(event);",
-            "    }",
-            "}"
-        ].joined(separator: "\n")
-        try Data(source.utf8).write(to: sourceURL)
-
-        let installer = DefaultProfileInstaller(fileManager: fileManager)
-        #expect(try installer.syncVisionToolkitSessionCompatibility(paths: paths))
-        let adapted = try String(contentsOf: sourceURL, encoding: .utf8)
-        #expect(adapted.contains("session.snapshotEvents === 'function'"))
-        #expect(adapted.contains("for (const event of events)"))
-        #expect(!(try installer.syncVisionToolkitSessionCompatibility(paths: paths)))
-    }
-
-    @Test
     func adaptsDshMnemonSessionHistoryForModernRuntime() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -1096,10 +1059,9 @@ exit 1
         try fileManager.createDirectory(at: profile, withIntermediateDirectories: true)
         let manifest = #"""
         {
-          "dsh": { "profile": { "bundles": ["dsh-mnemon", "@anionex/dsh-vision-toolkit"] } },
+          "dsh": { "profile": { "bundles": ["dsh-mnemon", "removed-plugin"] } },
           "dependencies": {
             "dsh-mnemon": "0.1.0",
-            "@anionex/dsh-vision-toolkit": "0.1.0",
             "removed-plugin": "0.1.0"
           }
         }
@@ -1107,10 +1069,10 @@ exit 1
         try Data(manifest.utf8).write(to: profile.appendingPathComponent("package.json"))
 
         let installed = RuntimeManagedPluginMaintenance.installedPluginIDs(in: profile)
-        #expect(installed == Set(["dsh-mnemon", "@anionex/dsh-vision-toolkit"]))
+        #expect(installed == Set(["dsh-mnemon", "removed-plugin"]))
         #expect(
             RuntimeManagedPluginMaintenance.updateArguments(installedPluginIDs: installed)
-                == ["add", "dsh-mnemon@latest", "@anionex/dsh-vision-toolkit@latest"]
+                == ["add", "dsh-mnemon@latest"]
         )
     }
 

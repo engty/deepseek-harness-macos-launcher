@@ -179,55 +179,13 @@ struct DefaultProfileInstaller {
         return true
     }
 
-    /// Newer Harness Runtime Sessions expose their durable history through
-    /// `snapshotEvents()` instead of the former iterable `events` property.
-    /// Vision Toolkit 0.1.39 reads that history while each Agent is created;
-    /// the old access therefore aborts every new session before it can be
-    /// attached to a Workspace. Keep the adapter source-compatible with both
-    /// contracts so a Runtime upgrade cannot disable session creation.
-    @discardableResult
-    func syncVisionToolkitSessionCompatibility(paths: AppPaths) throws -> Bool {
-        try syncVisionToolkitSessionCompatibility(profileWeb: paths.profileWeb)
-    }
-
-    /// Staged-slot variant used by Runtime update preflight. The patch stays
-    /// within the candidate profile until the candidate has successfully
-    /// started, so a failed update cannot change the active user profile.
-    @discardableResult
-    func syncVisionToolkitSessionCompatibility(profileWeb: URL) throws -> Bool {
-        let packageDirectory = profileWeb
-            .appendingPathComponent(
-                "node_modules/@anionex/dsh-vision-toolkit",
-                isDirectory: true
-            )
-            .resolvingSymlinksInPath()
-        let manifestURL = packageDirectory.appendingPathComponent("package.json")
-        guard fileManager.fileExists(atPath: manifestURL.path),
-              let identity = packageNameAndVersion(at: manifestURL),
-              identity.0 == "@anionex/dsh-vision-toolkit" else {
-            return false
-        }
-
-        let sourceURL = packageDirectory.appendingPathComponent("lib/exposure.js")
-        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8),
-              let adapted = Self.adaptVisionToolkitSessionSource(source),
-              adapted != source else {
-            return false
-        }
-        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
-        AppLogger.plugins.info(
-            "Applied Vision Toolkit session-history compatibility."
-        )
-        return true
-    }
-
     /// Recent dsh-mnemon releases still read the former `session.events` array from
     /// its lifecycle hooks. Modern Harness Runtimes replaced that property
-    /// with `snapshotEvents()`. Unlike the Vision Toolkit's single startup
-    /// probe, Mnemon reads the event log throughout a session, so every known
-    /// read site is routed through one small compatibility helper. The helper
-    /// keeps old Runtimes working and returns an empty history only when a
-    /// malformed session provides neither contract.
+    /// with `snapshotEvents()`. Mnemon reads the event log throughout a
+    /// session, so every known read site is routed through one small
+    /// compatibility helper. The helper keeps old Runtimes working and
+    /// returns an empty history only when a malformed session provides
+    /// neither contract.
     @discardableResult
     func syncDshMnemonSessionCompatibility(paths: AppPaths) throws -> Bool {
         try syncDshMnemonSessionCompatibility(profileWeb: paths.profileWeb)
@@ -527,19 +485,6 @@ struct DefaultProfileInstaller {
 """
         guard source.contains(original) else { return nil }
         return source.replacingOccurrences(of: original, with: replacement)
-    }
-
-    private static func adaptVisionToolkitSessionSource(_ source: String) -> String? {
-        let legacyLoop = "for (const event of session.events) {"
-        let compatibleLoop = """
-        const events = typeof session.snapshotEvents === 'function' ? session.snapshotEvents() : session.events;
-            for (const event of events) {
-        """
-        guard source.contains(legacyLoop),
-              !source.contains("session.snapshotEvents === 'function'") else {
-            return nil
-        }
-        return source.replacingOccurrences(of: legacyLoop, with: compatibleLoop)
     }
 
     private static func adaptDshMnemonSessionSource(_ source: String) -> String? {

@@ -193,10 +193,6 @@ final class PluginCommandRunner {
             profileWeb: stagingProfile,
             runtimeRoot: installation.root
         )
-        _ = try compatibilityInstaller.syncVisionToolkitSessionCompatibility(
-            profileWeb: stagingProfile
-        )
-
         // The upgrade can replace a plugin that is loaded while DSH reads its
         // profile. Apply the Runtime bridges before --dump-config so the
         // configuration preflight validates the same source that will boot.

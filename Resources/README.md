@@ -13,7 +13,7 @@ Resources/runtime/
   bin/
     mnemon              # pinned Mnemon Native CLI for dsh-mnemon
   default-profile/
-    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + Vision + GenUI
+    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + GenUI
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -39,10 +39,11 @@ machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
-(`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`),
-`@anionex/dsh-vision-toolkit` (`0.1.40`) and
-`@changfenhuang/dsh-genui` (`0.9.8`). GenUI teaches the model the `dsh-ui`
-fence and renders safe interactive cards, charts and forms inside replies.
+(`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`) and
+`@changfenhuang/dsh-genui` (`0.9.8`). Current DeepSeek models provide native
+multimodal input, so the launcher no longer bundles an external vision plugin.
+GenUI teaches the model the `dsh-ui` fence and renders safe interactive cards,
+charts and forms inside replies.
 The bundle carries a checksum-verified, architecture-matched Mnemon Native
 CLI (`0.2.5`) under `runtime/bin`; it is visible only to Harness child
 processes and is not installed into the user's global PATH. The pet is disabled by default and
@@ -61,13 +62,6 @@ upstream microphone recognition depends on Windows SAPI or a separately
 downloaded SenseVoice model, so that input path remains unavailable in this
 macOS adapter. It does not use a global Electron or alter the user's shell
 PATH.
-
-The Launcher also supports standard third-party plugins such as
-`@anionex/dsh-vision-toolkit`. Install it from the App's plugin menu with the
-official `dsh plugin --profile web add ...` command. Its first launch may take
-several minutes while it prepares an isolated Python runtime under the
-App-owned cache; this is expected and does not install Python packages into the
-system environment.
 
 Dependencies that are not shipped in the Runtime are never installed globally.
 The controlled recovery list is stored under the App's private Application

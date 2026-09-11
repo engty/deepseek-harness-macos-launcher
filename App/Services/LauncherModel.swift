@@ -178,9 +178,6 @@ final class LauncherModel: ObservableObject {
                 paths: paths,
                 runtimeRoot: installation.root
             )
-            _ = try defaultProfileInstaller.syncVisionToolkitSessionCompatibility(
-                paths: paths
-            )
             _ = try defaultProfileInstaller.syncDshMnemonSessionCompatibility(
                 paths: paths
             )
@@ -1246,7 +1243,7 @@ final class LauncherModel: ObservableObject {
             )
             if !managedPluginArguments.isEmpty {
                 runtimeUpdateStage = .updatingManagedPlugins
-                phase = .busy("正在同步更新记忆和视觉插件")
+                phase = .busy("正在同步更新记忆插件")
                 originalOverlayData = try profileManager.overlaySnapshot()
                 let dependencyPlan = try pluginRunner.dependencyPlan(
                     installation: newActivation.installation,
@@ -1312,9 +1309,6 @@ final class LauncherModel: ObservableObject {
             _ = try defaultProfileInstaller.syncDshLlmCodexCompatibility(
                 profileWeb: candidateProfile,
                 runtimeRoot: newActivation.installation.root
-            )
-            _ = try defaultProfileInstaller.syncVisionToolkitSessionCompatibility(
-                profileWeb: candidateProfile
             )
             _ = try defaultProfileInstaller.syncDshMnemonSessionCompatibility(
                 profileWeb: candidateProfile
@@ -1387,7 +1381,7 @@ final class LauncherModel: ObservableObject {
                 .joined(separator: "、")
             let completionMessage: String
             if managedPluginIDs.isEmpty {
-                completionMessage = "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。未检测到已安装的记忆或视觉插件，因此没有自动重新安装。"
+                completionMessage = "Runtime \(manifest.harness.version) 已完成激活，并通过启动检查。未检测到已安装的记忆插件，因此没有自动重新安装。"
             } else {
                 let summary = managedPluginSummary.isEmpty
                     ? managedPluginIDs.joined(separator: "、")

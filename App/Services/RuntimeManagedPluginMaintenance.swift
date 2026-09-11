@@ -5,8 +5,7 @@ import Foundation
 /// present in the profile, so a user's explicit removal remains respected.
 enum RuntimeManagedPluginMaintenance {
     private static let managedPluginSpecs: [(id: String, latestSpec: String)] = [
-        (id: "dsh-mnemon", latestSpec: "dsh-mnemon@latest"),
-        (id: "@anionex/dsh-vision-toolkit", latestSpec: "@anionex/dsh-vision-toolkit@latest")
+        (id: "dsh-mnemon", latestSpec: "dsh-mnemon@latest")
     ]
 
     static func managedPluginIDs(installedPluginIDs: Set<String>) -> [String] {

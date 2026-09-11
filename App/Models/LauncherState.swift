@@ -94,7 +94,7 @@ enum RuntimeUpdateStage: Int, Equatable {
         case .testing:
             return "正在用当前插件配置进行启动检查…"
         case .updatingManagedPlugins:
-            return "正在同步更新记忆和视觉插件…"
+            return "正在同步更新记忆插件…"
         case .completed:
             return "Harness Runtime 升级完成"
         }

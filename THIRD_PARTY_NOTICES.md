@@ -35,14 +35,6 @@ to the launcher's native profile transaction. The original license is included.
 - Repository: <https://github.com/imsai-sh/awesome-deepseek-harness-plugins/tree/main/packages/dsh1024>
 - Adapter scope: `Resources/dsh1024-launcher/NOTICE.md`
 
-## dsh-vision-toolkit
-
-The fresh-install profile includes `@anionex/dsh-vision-toolkit@0.1.40`.
-Its upstream package license and bundled notices remain in the Runtime.
-Image services and any external model accounts remain configured by the user.
-
-- Package: <https://www.npmjs.com/package/@anionex/dsh-vision-toolkit>
-
 ## dsh-genui
 
 The fresh-install profile includes `@changfenhuang/dsh-genui@0.9.8`. It adds

@@ -34,9 +34,9 @@ enum HarnessProcessError: LocalizedError {
 
 @MainActor
 final class HarnessProcessController {
-    /// Plugins may prepare a private runtime before Harness prints its ready
-    /// URL. Keep this longer than the vision toolkit's first-run dependency
-    /// preparation timeout so the launcher does not kill a healthy process.
+    /// Plugins may prepare private dependencies before Harness prints its ready
+    /// URL. Keep this long enough for first-run dependency preparation so the
+    /// launcher does not kill a healthy process.
     static let defaultReadinessTimeout: TimeInterval = 12 * 60
 
     private let readinessTimeout: TimeInterval

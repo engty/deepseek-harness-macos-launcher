@@ -42,7 +42,7 @@ struct PluginStoreIntegrationTests {
         let isolatedEnvironment = ["HOME": root.path, "PATH": "/usr/bin:/bin", "DSH1024_TELEMETRY": "0"]
         let runner = PluginCommandRunner(environment: isolatedEnvironment)
         let result = try await runner.mutateProfile(installation: installation, paths: paths,
-            arguments: ["add", archive.path, "@anionex/dsh-vision-toolkit@0.1.40", "dsh-llm-codex@0.1.1"])
+            arguments: ["add", archive.path, "dsh-llm-codex@0.1.1"])
         #expect(result.status == 0)
         #expect(ProfileManager(paths: paths).refresh().contains { $0.id == "launcher-store-smoke" })
         #expect(!PluginExecutionEnvironment.requiresStoreMigration(profile: paths.profileWeb,
