@@ -13,7 +13,7 @@ Resources/runtime/
   bin/
     mnemon              # pinned Mnemon Native CLI for dsh-mnemon
   default-profile/
-    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + GenUI
+    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + GenUI + privacy router
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -39,11 +39,15 @@ machine. The release pipeline is responsible for producing the Runtime Bundle
 and its SHA-256 manifest described in `prd.md`.
 
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
-(`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`) and
-`@changfenhuang/dsh-genui` (`0.9.8`). Current DeepSeek models provide native
+(`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`),
+`@changfenhuang/dsh-genui` (`0.9.8`) and the reviewed
+`dsh-privacy-router` (commit `1b51e6d`). Current DeepSeek models provide native
 multimodal input, so the launcher no longer bundles an external vision plugin.
 GenUI teaches the model the `dsh-ui` fence and renders safe interactive cards,
 charts and forms inside replies.
+The privacy router is installed but disabled in a fresh profile because it
+requires a configured local Provider before it can protect the main route. Once
+that Provider is ready, enable it from `插件 → 已安装插件`.
 The bundle carries a checksum-verified, architecture-matched Mnemon Native
 CLI (`0.2.5`) under `runtime/bin`; it is visible only to Harness child
 processes and is not installed into the user's global PATH. The pet is disabled by default and

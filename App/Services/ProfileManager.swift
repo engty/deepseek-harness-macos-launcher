@@ -73,6 +73,19 @@ final class ProfileManager {
         try writeOverlay()
     }
 
+    /// Keeps newly bundled plugins from changing the behavior of a fresh
+    /// profile before their prerequisites are configured. The package remains
+    /// installed and visible in the plugin menu, so the user can explicitly
+    /// enable it after completing its setup.
+    @discardableResult
+    func ensureDisabled(pluginID: String) throws -> Bool {
+        guard let plugin = refresh().first(where: { $0.id == pluginID }),
+              plugin.canBeDisabled,
+              !plugin.isDisabled else { return false }
+        try setEnabled(plugin, enabled: false)
+        return true
+    }
+
     func overlayURLIfNeeded() -> URL? {
         disabledRows.isEmpty ? nil : paths.overlay
     }

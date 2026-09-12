@@ -5,7 +5,10 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_ROOT="${1:-${HARNESS_RUNTIME_SOURCE:-}}"
 NODE_PATH="${HARNESS_NODE_PATH:-$(command -v node || true)}"
 DESTINATION="$ROOT_DIR/Resources/runtime"
-DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6 @changfenhuang/dsh-genui@0.9.8}"
+# Keep the router pinned to a reviewed upstream commit. It is installed from
+# GitHub because the project is intentionally not published to npm yet.
+DEFAULT_PRIVACY_ROUTER_SPEC="https://github.com/LYiHub/pub-dsh-privacy-router.git#1b51e6d622eaebaa3b0a3ab51a416cb2499d1251"
+DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6 @changfenhuang/dsh-genui@0.9.8 ${DEFAULT_PRIVACY_ROUTER_SPEC}}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2
@@ -108,6 +111,26 @@ done
   echo "默认插件 profile 未生成 package.json。" >&2
   exit 1
 }
+if [[ " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" ${DEFAULT_PRIVACY_ROUTER_SPEC} "* ]]; then
+  PRIVACY_ROUTER_PACKAGE="$DEFAULT_PROFILE_HOME/profiles/web/node_modules/dsh-privacy-router/package.json"
+  [[ -f "$PRIVACY_ROUTER_PACKAGE" ]] || {
+    echo "默认 profile 未生成 dsh-privacy-router。" >&2
+    exit 1
+  }
+  "$STAGING_ROOT/runtime/node/bin/node" -e '
+    const fs = require("node:fs");
+    const packagePath = process.argv[1];
+    const profilePath = process.argv[2];
+    const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    const profile = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+    if (pkg.name !== "dsh-privacy-router" || profile.dsh?.profile?.bundles?.includes(pkg.name) !== true) {
+      process.exit(1);
+    }
+  ' "$PRIVACY_ROUTER_PACKAGE" "$DEFAULT_PROFILE_HOME/profiles/web/package.json" || {
+    echo "dsh-privacy-router 未正确注册为默认 profile bundle。" >&2
+    exit 1
+  }
+fi
 
 # better-dsh-pet is published as a cross-platform DSH bundle. On macOS, apply
 # the reviewed adapter after the official package is resolved so its Electron

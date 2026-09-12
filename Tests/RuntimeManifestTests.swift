@@ -1025,6 +1025,41 @@ exit 1
 
     @Test
     @MainActor
+    func ensureDisabledLeavesBundledPluginInstalledAndVisible() throws {
+        let fileManager = FileManager.default
+        let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        defer { try? fileManager.removeItem(at: root) }
+        let paths = AppPaths(
+            applicationSupport: root.appendingPathComponent("support", isDirectory: true),
+            caches: root.appendingPathComponent("caches", isDirectory: true),
+            logs: root.appendingPathComponent("logs", isDirectory: true)
+        )
+        try paths.prepare()
+
+        let packageDirectory = paths.profileWeb.appendingPathComponent(
+            "node_modules/dsh-privacy-router",
+            isDirectory: true
+        )
+        try fileManager.createDirectory(at: packageDirectory, withIntermediateDirectories: true)
+        let profileManifest = #"{"dsh":{"profile":{"bundles":["dsh-privacy-router"]}},"dependencies":{"dsh-privacy-router":"github:LYiHub/pub-dsh-privacy-router#fixture"}}"#
+        try Data(profileManifest.utf8).write(to: paths.profileWeb.appendingPathComponent("package.json"))
+        let packageManifest = #"{"name":"dsh-privacy-router","version":"0.1.0","dsh":{"bundle":{"patch":"./cordis.patch.yml"}}}"#
+        try Data(packageManifest.utf8).write(to: packageDirectory.appendingPathComponent("package.json"))
+        try Data("- insert:\n    - id: privacy-cloud-router\n      name: dsh-privacy-router\n".utf8)
+            .write(to: packageDirectory.appendingPathComponent("cordis.patch.yml"))
+
+        let manager = ProfileManager(paths: paths)
+        #expect(try manager.ensureDisabled(pluginID: "dsh-privacy-router"))
+        let plugin = try #require(manager.refresh().first)
+        #expect(plugin.id == "dsh-privacy-router")
+        #expect(plugin.isDisabled)
+        #expect(fileManager.fileExists(atPath: packageDirectory.appendingPathComponent("package.json").path))
+        #expect(try String(contentsOf: paths.overlay, encoding: .utf8).contains("privacy-cloud-router"))
+        #expect(try !manager.ensureDisabled(pluginID: "dsh-privacy-router"))
+    }
+
+    @Test
+    @MainActor
     func refreshIncludesInstalledPluginWithoutPatchForRemoval() throws {
         let fileManager = FileManager.default
         let root = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)

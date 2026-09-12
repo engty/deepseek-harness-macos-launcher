@@ -157,7 +157,16 @@ final class LauncherModel: ObservableObject {
             let installation = try locator.locate()
             runtimePath = installation.executable.path
             runtimeVersion = installation.version
-            try defaultProfileInstaller.seedIfNeeded(paths: paths, runtimeRoot: installation.root)
+            let seededDefaultProfile = try defaultProfileInstaller.seedIfNeeded(
+                paths: paths,
+                runtimeRoot: installation.root
+            )
+            if seededDefaultProfile {
+                // The privacy router requires a configured local Provider. It
+                // is bundled for discoverability, but must not block the
+                // first conversation on a fresh App installation.
+                _ = try profileManager.ensureDisabled(pluginID: "dsh-privacy-router")
+            }
             // Existing profiles survive App updates. Refresh only the pinned
             // better-dsh-pet 0.3.5 platform files so old Windows helper code
             // cannot remain active on macOS; unrelated plugin files/settings

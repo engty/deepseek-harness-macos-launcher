@@ -72,6 +72,18 @@ binary globally.
 - Mnemon Native release: <https://github.com/mnemon-dev/mnemon/releases/tag/v0.2.7>
 - Mnemon Native license: MIT
 
+## dsh-privacy-router
+
+The fresh-install Runtime profile includes the Host-side privacy router from a
+reviewed upstream Git commit. It is installed but disabled by default because
+the router requires a configured local Provider for its privacy boundary. After
+the local Provider is configured, users can enable it from the launcher's
+installed-plugin menu. The upstream project is MIT-licensed.
+
+- Repository: <https://github.com/LYiHub/pub-dsh-privacy-router>
+- Pinned commit: `1b51e6d622eaebaa3b0a3ab51a416cb2499d1251`
+- License: MIT
+
 ## Other dependencies
 
 Node.js, Swift, SwiftUI, AppKit, WebKit, npm, pnpm, and transitive npm packages are
