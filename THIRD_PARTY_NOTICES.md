@@ -84,6 +84,19 @@ installed-plugin menu. The upstream project is MIT-licensed.
 - Pinned commit: `1b51e6d622eaebaa3b0a3ab51a416cb2499d1251`
 - License: MIT
 
+## dsh-mattpocock-skills
+
+The fresh-install Runtime profile includes the launcher-specific
+`dsh-mattpocock-skills` bundle. It contains 25 localized engineering and
+productivity skills and registers them through DeepSeek Harness's first-party
+skill loader. The bundle is pinned to commit
+`a1cb9b3a40a3f372406663f50083197dfe110177` so releases do not change when the
+upstream branch moves.
+
+- Repository: <https://github.com/engty/dsh-mattpocock-skills>
+- Based on: <https://github.com/mattpocock/skills>
+- License: MIT
+
 ## Other dependencies
 
 Node.js, Swift, SwiftUI, AppKit, WebKit, npm, pnpm, and transitive npm packages are

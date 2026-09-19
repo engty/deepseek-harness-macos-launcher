@@ -8,7 +8,11 @@ DESTINATION="$ROOT_DIR/Resources/runtime"
 # Keep the router pinned to a reviewed upstream commit. It is installed from
 # GitHub because the project is intentionally not published to npm yet.
 DEFAULT_PRIVACY_ROUTER_SPEC="https://github.com/LYiHub/pub-dsh-privacy-router.git#1b51e6d622eaebaa3b0a3ab51a416cb2499d1251"
-DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6 @changfenhuang/dsh-genui@0.9.8 ${DEFAULT_PRIVACY_ROUTER_SPEC}}"
+# Keep the launcher-specific skill bundle on a reviewed immutable commit. The
+# package is installed into the fresh profile at build time, so a downloaded
+# App never needs to fetch the repository during startup.
+DEFAULT_MATTPOCOCK_SKILLS_SPEC="https://github.com/engty/dsh-mattpocock-skills.git#a1cb9b3a40a3f372406663f50083197dfe110177"
+DEFAULT_PLUGIN_SPECS="${HARNESS_DEFAULT_PLUGIN_SPECS:-dsh1024@0.5.0 better-dsh-pet@0.3.5 dsh-mnemon@0.4.6 @changfenhuang/dsh-genui@0.9.8 ${DEFAULT_PRIVACY_ROUTER_SPEC} ${DEFAULT_MATTPOCOCK_SKILLS_SPEC}}"
 
 if [[ -z "$SOURCE_ROOT" || ! -d "$SOURCE_ROOT" ]]; then
   echo "usage: HARNESS_RUNTIME_SOURCE=/path/to/runtime HARNESS_NODE_PATH=/path/to/node $0" >&2
@@ -128,6 +132,35 @@ if [[ " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" ${DEFAULT_PRIVACY_ROUTER_SPEC} "*
     }
   ' "$PRIVACY_ROUTER_PACKAGE" "$DEFAULT_PROFILE_HOME/profiles/web/package.json" || {
     echo "dsh-privacy-router 未正确注册为默认 profile bundle。" >&2
+    exit 1
+  }
+fi
+if [[ " ${DEFAULT_PLUGIN_SPEC_LIST[*]} " == *" ${DEFAULT_MATTPOCOCK_SKILLS_SPEC} "* ]]; then
+  MATTOCOCK_SKILLS_PACKAGE="$DEFAULT_PROFILE_HOME/profiles/web/node_modules/dsh-mattpocock-skills/package.json"
+  [[ -f "$MATTOCOCK_SKILLS_PACKAGE" ]] || {
+    echo "默认 profile 未生成 dsh-mattpocock-skills。" >&2
+    exit 1
+  }
+  "$STAGING_ROOT/runtime/node/bin/node" -e '
+    const fs = require("node:fs");
+    const path = require("node:path");
+    const packagePath = process.argv[1];
+    const profilePath = process.argv[2];
+    const packageRoot = path.dirname(packagePath);
+    const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+    const profile = JSON.parse(fs.readFileSync(profilePath, "utf8"));
+    const skillsRoot = path.join(packageRoot, "skills");
+    const skills = fs.readdirSync(skillsRoot, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .filter((entry) => fs.existsSync(path.join(skillsRoot, entry.name, "SKILL.md")));
+    if (pkg.name !== "dsh-mattpocock-skills"
+        || pkg.version !== "1.0.0"
+        || profile.dsh?.profile?.bundles?.includes(pkg.name) !== true
+        || skills.length !== 25) {
+      process.exit(1);
+    }
+  ' "$MATTOCOCK_SKILLS_PACKAGE" "$DEFAULT_PROFILE_HOME/profiles/web/package.json" || {
+    echo "dsh-mattpocock-skills 未正确注册，或 25 个技能目录不完整。" >&2
     exit 1
   }
 fi

@@ -13,7 +13,7 @@ Resources/runtime/
   bin/
     mnemon              # pinned Mnemon Native CLI for dsh-mnemon
   default-profile/
-    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + GenUI + privacy router
+    profiles/web/       # fresh-install profile: 1024 Store + pet + Mnemon + GenUI + privacy router + skills
 ```
 
 `AppIcon.png` is the source artwork for the macOS application icon. The build
@@ -41,7 +41,11 @@ and its SHA-256 manifest described in `prd.md`.
 The Runtime Bundle also contains a pinned default web profile with `dsh1024`
 (`0.5.0`), `better-dsh-pet` (`0.3.5`), `dsh-mnemon` (`0.4.6`),
 `@changfenhuang/dsh-genui` (`0.9.8`) and the reviewed
-`dsh-privacy-router` (commit `1b51e6d`). Current DeepSeek models provide native
+`dsh-privacy-router` (commit `1b51e6d`). It also includes the launcher-specific
+`dsh-mattpocock-skills` bundle (commit `a1cb9b3`, 25 localized engineering and
+productivity skills). The skills package uses Harness's first-party skill loader
+and is available immediately in fresh installations without changing the
+user's global skill directories. Current DeepSeek models provide native
 multimodal input, so the launcher no longer bundles an external vision plugin.
 GenUI teaches the model the `dsh-ui` fence and renders safe interactive cards,
 charts and forms inside replies.
