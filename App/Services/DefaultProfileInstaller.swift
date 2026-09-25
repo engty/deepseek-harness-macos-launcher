@@ -35,11 +35,11 @@ struct DefaultProfileInstaller {
         self.fileManager = fileManager
     }
 
-    /// Keeps the profile's official LLM module aligned with the active
-    /// Runtime. A profile created by an older Harness can contain a real
-    /// `@deepseek-ai/dsh-llm` directory. Node resolves that directory before
-    /// the Runtime's module tree, and the old module does not register the
-    /// modern `/api/llm/*` routes, producing an opaque HTTP 404 in Settings.
+    /// Keeps profile-hoisted official modules aligned with the active Runtime.
+    /// Node resolves modules in the profile before the Runtime's package tree,
+    /// so an old first-party package can shadow its compatible Runtime copy.
+    /// This is especially important for `dsh-llm` (which owns `/api/llm/*`)
+    /// and `dsh-settings`, whose provider lifecycle changed after rc.6.
     ///
     /// The previous directory is moved into an App-owned backup instead of
     /// being deleted. The replacement is an absolute link to the exact
@@ -67,14 +67,52 @@ struct DefaultProfileInstaller {
         runtimeRoot: URL,
         quarantineRoot: URL
     ) throws -> Bool {
-        let runtimePackage = try runtimePackageDirectory(
+        var changed = try syncRuntimeCoreModule(
             named: "dsh-llm",
-            runtimeRoot: runtimeRoot
+            profileWeb: profileWeb,
+            runtimeRoot: runtimeRoot,
+            quarantineRoot: quarantineRoot,
+            installWhenMissing: true
         )
+
+        // Profiles from rc.6 may contain dsh-settings 0.1.0-rc.6. Its service
+        // contract predates `load()`, while newer Runtime settings providers
+        // call that method during Cordis initialization. Keep the user's
+        // profile copy as a backup, but let the selected Runtime supply the
+        // matching core module. Older Runtimes without dsh-settings are left
+        // untouched for backwards compatibility.
+        if try syncRuntimeCoreModule(
+            named: "dsh-settings",
+            profileWeb: profileWeb,
+            runtimeRoot: runtimeRoot,
+            quarantineRoot: quarantineRoot,
+            installWhenMissing: false
+        ) {
+            changed = true
+        }
+        return changed
+    }
+
+    private func syncRuntimeCoreModule(
+        named package: String,
+        profileWeb: URL,
+        runtimeRoot: URL,
+        quarantineRoot: URL,
+        installWhenMissing: Bool
+    ) throws -> Bool {
+        let runtimePackage: URL
+        do {
+            runtimePackage = try runtimePackageDirectory(named: package, runtimeRoot: runtimeRoot)
+        } catch RuntimeCompatibilityError.runtimePackageMissing(_) where !installWhenMissing {
+            return false
+        }
+
         let activePackage = profileWeb
-            .appendingPathComponent("node_modules/@deepseek-ai/dsh-llm", isDirectory: true)
+            .appendingPathComponent("node_modules/@deepseek-ai/\(package)", isDirectory: true)
         let activeExists = fileManager.fileExists(atPath: activePackage.path)
             || (try? fileManager.destinationOfSymbolicLink(atPath: activePackage.path)) != nil
+        guard activeExists || installWhenMissing else { return false }
+
         let activeResolved = activePackage.resolvingSymlinksInPath().standardizedFileURL.path
         let runtimeResolved = runtimePackage.standardizedFileURL.path
         guard !activeExists || activeResolved != runtimeResolved else { return false }
@@ -85,7 +123,7 @@ struct DefaultProfileInstaller {
             )?.1 ?? "unknown"
             let backup = quarantineRoot
                 .appendingPathComponent(
-                    "dsh-llm-\(safePathComponent(version))-\(UUID().uuidString)",
+                    "\(package)-\(safePathComponent(version))-\(UUID().uuidString)",
                     isDirectory: true
                 )
             do {
@@ -112,7 +150,7 @@ struct DefaultProfileInstaller {
             throw RuntimeCompatibilityError.quarantineFailed(error.localizedDescription)
         }
         AppLogger.plugins.info(
-            "Aligned profile @deepseek-ai/dsh-llm with the active Runtime."
+            "Aligned profile @deepseek-ai/\(package) with the active Runtime."
         )
         return true
     }
