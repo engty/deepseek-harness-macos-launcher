@@ -9,6 +9,7 @@ struct DefaultProfileInstaller {
     private enum RuntimeCompatibilityError: LocalizedError {
         case runtimePackageMissing(String)
         case quarantineFailed(String)
+        case unsupportedPluginCompatibility(String)
 
         var errorDescription: String? {
             switch self {
@@ -16,6 +17,8 @@ struct DefaultProfileInstaller {
                 return "当前 Runtime 缺少官方模块 \(package)，无法完成兼容性修复。"
             case .quarantineFailed(let message):
                 return "无法隔离旧版 Runtime 模块：\(message)"
+            case .unsupportedPluginCompatibility(let plugin):
+                return "插件 \(plugin) 使用了当前 Runtime 已移除的设置接口，且无法安全自动适配。"
             }
         }
     }
@@ -155,10 +158,11 @@ struct DefaultProfileInstaller {
         return true
     }
 
-    /// dsh-llm-codex 0.1.1 was released against the old `CallId` export.
-    /// Modern Harness Runtimes expose the equivalent `ToolCallId` symbol.
-    /// Adapt only this narrow import/call site based on the actual Runtime
-    /// export, and reverse it automatically when an older Runtime is selected.
+    /// dsh-llm-codex 0.1.1 uses two Runtime APIs that changed independently:
+    /// the settings-section helper was replaced by `ctx.settings.register`,
+    /// and the LLM call identifier was renamed from `CallId` to `ToolCallId`.
+    /// Adapt only these known import/call sites based on the selected Runtime,
+    /// and reverse each adapter when an older Runtime is selected.
     @discardableResult
     func syncDshLlmCodexCompatibility(
         paths: AppPaths,
@@ -175,11 +179,13 @@ struct DefaultProfileInstaller {
         profileWeb: URL,
         runtimeRoot: URL
     ) throws -> Bool {
+        var changed = try syncDshLlmCodexSettingsCompatibility(
+            profileWeb: profileWeb,
+            runtimeRoot: runtimeRoot
+        )
         let sourceURL = profileWeb
             .appendingPathComponent("node_modules/dsh-llm-codex/lib/translate.js")
-        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else {
-            return false
-        }
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else { return changed }
         let runtimePackage = try runtimePackageDirectory(
             named: "dsh-llm",
             runtimeRoot: runtimeRoot
@@ -208,12 +214,96 @@ struct DefaultProfileInstaller {
                 )
                 .replacingOccurrences(of: "ToolCallId(", with: "CallId(")
         } else {
-            return false
+            return changed
         }
         try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
         AppLogger.plugins.info(
             "Aligned dsh-llm-codex with the active Runtime LLM identifier API."
         )
+        changed = true
+        return changed
+    }
+
+    private func syncDshLlmCodexSettingsCompatibility(
+        profileWeb: URL,
+        runtimeRoot: URL
+    ) throws -> Bool {
+        let sourceURL = profileWeb
+            .appendingPathComponent("node_modules/dsh-llm-codex/lib/index.js")
+        guard let source = try? String(contentsOf: sourceURL, encoding: .utf8) else {
+            return false
+        }
+
+        let runtimeSettings = try runtimePackageDirectory(
+            named: "dsh-settings",
+            runtimeRoot: runtimeRoot
+        )
+        let runtimeExports = try String(
+            contentsOf: runtimeSettings.appendingPathComponent("lib/index.js"),
+            encoding: .utf8
+        )
+        let hasLegacySettingsHelpers = runtimeExports.contains("installSettingsSection")
+            && runtimeExports.contains("settingsNamespace")
+
+        let legacyImport = "import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings';"
+        let legacyNamespace = "const NS = settingsNamespace('llm-codex');"
+        let modernNamespace = "const NS = 'llm-codex';"
+        let legacyIntegration = #"""
+          installSettingsSection(ctx, NS, Config, config, {
+            setSource: (source) => {
+              current = source;
+            },
+            onChange: () => {
+              // 设置段变化后重注册路由,保持注册事实与配置一致
+              registration.replace([PROVIDER]);
+            },
+          });
+        """#
+        let modernIntegration = #"""
+          const isSettingsConsumerUnloading = () => ctx.fiber.state === 5 || ctx.fiber.state === 4;
+          ctx.inject(['settings'], (sctx) => {
+            const scope = sctx.settings.register(NS, Config, { base: config });
+            current = () => scope.get();
+            sctx.effect(() => () => {
+              if (isSettingsConsumerUnloading()) return;
+              current = () => config;
+              registration.replace([PROVIDER]);
+            });
+            scope.watch(() => {
+              if (isSettingsConsumerUnloading()) return;
+              registration.replace([PROVIDER]);
+            });
+            registration.replace([PROVIDER]);
+          });
+        """#
+
+        if hasLegacySettingsHelpers {
+            guard source.contains(modernIntegration) else { return false }
+            let restored = source
+                .replacingOccurrences(of: modernIntegration, with: legacyIntegration)
+                .replacingOccurrences(of: modernNamespace, with: legacyNamespace)
+            let withImport = restored.replacingOccurrences(
+                of: "import z from '@deepseek-ai/schemastery';",
+                with: "import z from '@deepseek-ai/schemastery';\n\(legacyImport)"
+            )
+            guard withImport != source else { return false }
+            try withImport.write(to: sourceURL, atomically: true, encoding: .utf8)
+            AppLogger.plugins.info("Restored dsh-llm-codex legacy settings API compatibility.")
+            return true
+        }
+
+        guard source.contains(legacyImport) else { return false }
+        guard source.contains(legacyIntegration), source.contains(legacyNamespace) else {
+            throw RuntimeCompatibilityError.unsupportedPluginCompatibility("dsh-llm-codex")
+        }
+
+        let adapted = source
+            .replacingOccurrences(of: "\(legacyImport)\n", with: "")
+            .replacingOccurrences(of: legacyNamespace, with: modernNamespace)
+            .replacingOccurrences(of: legacyIntegration, with: modernIntegration)
+        guard adapted != source else { return false }
+        try adapted.write(to: sourceURL, atomically: true, encoding: .utf8)
+        AppLogger.plugins.info("Aligned dsh-llm-codex with the active Runtime settings API.")
         return true
     }
 
